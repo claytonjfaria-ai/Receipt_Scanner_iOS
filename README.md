@@ -12,38 +12,45 @@ Swift/SwiftUI only.
 
 ## Status
 
-**Milestone 2 — capture + review + `extract-bill`.** VisionKit scan → assemble a durable
-on-device multi-page PDF at the user's chosen archive resolution (150/200/300 DPI, sticky,
-default 200 — plan §4.1) → review screen calling the real `extract-bill` Edge Function
-(plan §4.2, §4.3), with §4.6 Tier 2's bounded retry (2 automatic, 3s delay, then manual
-Retry). Sign-in is new at this milestone: a minimal Supabase Auth email/password screen,
-needed only to obtain the JWT `extract-bill`'s `verify_jwt` gate requires (plan §8) — hand-
-rolled against GoTrue's REST API directly rather than pulling in the `supabase-swift` SDK,
-to keep the unsigned-CI-build pipeline free of SPM dependency resolution.
+**Milestone 3, part 2 — Drive OAuth sign-in, confirmed working end to end
+2026-08-23.** Capture (VisionKit → durable on-device PDF, plan §4.1) → review + a real
+`extract-bill` call (plan §4.2, §4.3) → Drive sign-in, all device-tested together in one
+real session: a scanned Citi bill correctly extracted company/amount/date
+(`Citi`/`148.61`/date all correct), and "Connect Google Drive" completed a real Google
+OAuth consent flow and returned "Connected." First real evidence any of `extract-bill`,
+Supabase sign-in, or Drive OAuth actually work on iOS, not just that they compile.
 
-Review's Save persists confirmed company/amount/billing-date to a local JSON sidecar
-(`BillMetadataStore`) next to the staged PDF — a stand-in for real Drive filing, mirroring
-Android's own milestone-2-equivalent choice exactly.
+**What's still a stand-in, on purpose:** Review's Save does **not** file to Drive yet — it
+persists confirmed company/amount/billing-date to a local JSON sidecar
+(`BillMetadataStore`) next to the staged PDF, visible in the "Saved, not yet filed" section
+on the main Bills screen. Being connected to Drive and actually filing into it are two
+separate pieces; only sign-in is built. The folder picker and the real upload (plan §4.4's
+remaining piece — the part that would move a bill into `Scans/<Company>/`) are next.
 
-No Google Drive OAuth, no real filing yet.
-
-**Device-tested 2026-08-23, partially.** Sideloaded via SideStore onto a real iPad and
-launched correctly — no crash, sign-in screen renders, the Diagnostics section works (this
-is how the real bundle ID below was actually read). Sign-in itself was **blocked** on this
-first pass: the CI-built `.ipa` had no real Supabase secrets, and — since there's no local
-Mac — CI is the *only* build path, so there was no working build to fall back to. Fixed
-same day by moving real secrets into this repo's GitHub Actions secrets (see Building,
-below) rather than relying on a local `secrets.env` source step that could never actually
-run. Sign-in and `extract-bill` are untested end to end as of this line; the next CI build
-should be the first one able to.
+Getting to this point took three real on-device bugs, each caught by an actual sign-in/
+connect attempt rather than by CI (which can't drive a live OAuth consent screen or a
+Supabase login):
+1. **CI builds were permanently stuck at "not configured"** — `secrets.env` only helps on a
+   machine that can run `xcodegen`/`xcodebuild` locally, and there's no local Mac, so CI was
+   the *only* build path and had no real secrets. Fixed by moving `SUPABASE_URL`/
+   `SUPABASE_ANON_KEY` into this repo's own GitHub Actions secrets instead.
+2. **"Connect Google Drive" silently killed the app**, straight to the Home Screen, no
+   error. Root cause: `presentationAnchor(for:)` used an unconditional
+   `DispatchQueue.main.sync`, which self-deadlocks when (as here) the framework calls it
+   already on the main thread — the app hangs, iOS's watchdog kills it, and that looks
+   exactly like the app just closing.
+3. **The first fix attempt didn't compile** — a plain `nonisolated` on the helper function
+   wasn't enough, since `UIApplication.shared` is itself `@MainActor`-isolated in current
+   SDKs. `MainActor.assumeIsolated` is the actual purpose-built escape hatch for "this
+   synchronous callback is known to run on the main thread, but the type system can't
+   verify that statically."
 
 Build order from here, matching the Android build order in the main plan:
 
 1. ~~Capture — VisionKit → local PDF~~ (milestone 1)
-2. ~~Review screen + `extract-bill` call~~ (this milestone)
-3. Drive OAuth + filing (plan §4.4) — **unblocked 2026-08-23**: the rewritten-bundle-ID
-   question this was waiting on is resolved (see below), so the OAuth client can now be
-   registered against a value that's confirmed stable
+2. ~~Review screen + `extract-bill` call~~ (milestone 2)
+3. Drive OAuth (**sign-in confirmed working 2026-08-23**) + filing (folder picker, real
+   upload — not yet built)
 4. PII redaction (plan §4.7)
 5. Reliability tiers (plan §4.6) — currently just Tier 1 (durable local save) and a partial
    Tier 2 (bounded retry on extraction); no Tier 3 persist-until-filed yet, since there's
