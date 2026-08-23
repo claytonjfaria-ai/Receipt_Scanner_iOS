@@ -1,0 +1,71 @@
+name: Build unsigned IPA
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    # Must be an image with Xcode 16+. XcodeGen emits pbxproj objectVersion 77, which
+    # Xcode 15.x refuses to open — this exact failure mode was hit and fixed in
+    # dev/iOs_Test (BillsCaptureTest), which proved this pipeline end to end 2026-08-18.
+    # Pinning objectVersion in project.yml does NOT work; XcodeGen ignores it. The runner
+    # image is the only real control here — do not downgrade this without checking.
+    # macOS runners bill at ~10x the Linux minute multiplier. Build is ~2-3 minutes.
+    runs-on: macos-15
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Show toolchain and project format
+        run: |
+          xcodebuild -version
+          echo "--- available Xcodes ---"
+          ls /Applications | grep -i '^Xcode' || true
+          echo "--- pbxproj objectVersion (must be readable by the Xcode above) ---"
+          grep -m1 objectVersion ReceiptScannerBills.xcodeproj/project.pbxproj
+
+      # Step A of plan §8 (goal-receipt-scanner.../PLAN-MOBILE-BILLS-CAPTURE.md): compile
+      # with signing switched off entirely. No Apple ID, no certificates, no interactive
+      # session — this is why no Mac is needed anywhere.
+      - name: Build (unsigned)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project ReceiptScannerBills.xcodeproj \
+            -scheme ReceiptScannerBills \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            build
+
+      # An .ipa is just a zip with the .app inside a Payload/ directory.
+      - name: Package .ipa
+        run: |
+          set -euo pipefail
+          APP_PATH="build/Build/Products/Release-iphoneos/ReceiptScannerBills.app"
+          test -d "$APP_PATH" || { echo "::error::app bundle not found at $APP_PATH"; exit 1; }
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          zip -qry ReceiptScannerBills-unsigned.ipa Payload
+          ls -lh ReceiptScannerBills-unsigned.ipa
+
+      - name: Upload .ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReceiptScannerBills-unsigned-ipa
+          path: ReceiptScannerBills-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30

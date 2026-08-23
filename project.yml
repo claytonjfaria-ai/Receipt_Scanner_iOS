@@ -1,0 +1,65 @@
+name: ReceiptScannerBills
+options:
+  bundleIdPrefix: com.tap2know
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    # Unsigned CI builds: SideStore re-signs with the free Apple ID at install time.
+    # Proven end to end against this exact combination in BillsCaptureTest, 2026-08-18
+    # (see dev/iOs_Test) — CODE_SIGNING_ALLOWED=NO here, iLoader/SideStore sign afterward.
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: ""
+    CODE_SIGNING_REQUIRED: "NO"
+    CODE_SIGNING_ALLOWED: "NO"
+
+targets:
+  ReceiptScannerBills:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+    info:
+      path: Support/Info.plist
+      properties:
+        CFBundleDisplayName: Bills
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # VisionKit document scanner needs this or the app hard-crashes on first scan
+        # (plan §8, confirmed in BillsCaptureTest).
+        NSCameraUsageDescription: Used to capture bill pages with the document scanner.
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tap2know.receiptscanner.bills
+        # 1,2 = iPhone + iPad. Plan §8 targets the iPad; day-to-day testing happens on
+        # whatever device is at hand, same reasoning BillsCaptureTest used.
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: "NO"
+
+schemes:
+  ReceiptScannerBills:
+    build:
+      targets:
+        ReceiptScannerBills: [run, test, profile, analyze, archive]
+    run:
+      config: Debug
+    archive:
+      config: Release
