@@ -134,7 +134,10 @@ struct CaptureView: View {
     }
 
     private var stagedSection: some View {
-        Section("Saved, not yet filed — \(stagedPDFs.count)") {
+        // A String title plus a `footer:` closure isn't a valid `Section` overload — SwiftUI
+        // only pairs a footer with a `header:` closure, not the plain-string title form.
+        // Caught by the CI build (exit 65), not locally — no Swift compiler on this machine.
+        Section {
             ForEach(stagedPDFs, id: \.self) { url in
                 HStack {
                     VStack(alignment: .leading) {
@@ -150,6 +153,8 @@ struct CaptureView: View {
                     Button("Delete", role: .destructive) { discard(url) }
                 }
             }
+        } header: {
+            Text("Saved, not yet filed — \(stagedPDFs.count)")
         } footer: {
             Text("Filing to Drive isn't built yet — these stay on-device until that milestone lands.")
         }
