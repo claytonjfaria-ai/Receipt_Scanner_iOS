@@ -5,10 +5,16 @@ import SwiftUI
 /// and the original first-page capture, kept in memory only for the `extract-bill` call
 /// (§4.2: extraction reads a different resolution than the archive, so the raw capture has to
 /// survive past the point the archive PDF was assembled).
-struct PendingBill: Identifiable {
+struct PendingBill: Identifiable, Hashable {
     let id = UUID()
     let pdfURL: URL
     let extractionPage: UIImage
+
+    // `navigationDestination(item:)` needs `Hashable`, not just `Identifiable` — caught by
+    // CI (exit 65), not locally. Derived on `id` alone: `UIImage` doesn't reliably conform to
+    // Hashable/Equatable, and identity is all this comparison actually needs.
+    static func == (lhs: PendingBill, rhs: PendingBill) -> Bool { lhs.id == rhs.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
 /// Plan §4.3: "much simpler than receipts' — no line items to edit... let the user correct
