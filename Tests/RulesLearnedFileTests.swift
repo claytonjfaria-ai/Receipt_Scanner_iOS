@@ -24,8 +24,12 @@ final class RulesLearnedFileTests: XCTestCase {
         """
         let file = try JSONDecoder().decode(RulesLearnedFile.self, from: Data(json.utf8))
 
-        XCTAssertEqual(file.redactionRules["Citi"]?.first?.page, 0)
-        XCTAssertEqual(file.redactionRules["Citi"]?.first?.rect.x, 0.1, accuracy: 0.0001)
+        // XCTAssertEqual(_:_:accuracy:) needs a non-optional FloatingPoint on both sides, unlike
+        // the plain XCTAssertEqual overload used just above for `.page` — caught by CI, not
+        // locally. XCTUnwrap surfaces a clear failure if decoding didn't actually produce a region.
+        let region = try XCTUnwrap(file.redactionRules["Citi"]?.first)
+        XCTAssertEqual(region.page, 0)
+        XCTAssertEqual(region.rect.x, 0.1, accuracy: 0.0001)
     }
 
     /// The whole reason `redactionRules` is modeled at all on iOS before §4.7 is built here —
