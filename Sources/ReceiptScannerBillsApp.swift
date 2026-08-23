@@ -5,19 +5,19 @@ import SwiftUI
 /// the eventual goal — capture, extract-bill, review, redact, file to Drive — built up in
 /// the same dependency order the plan used on Android (§4.1 first).
 ///
-/// Milestone 2 (current): capture + review + `extract-bill`. Sign-in is new at this
-/// milestone too — extract-bill's `verify_jwt` gate needs a real Supabase session (plan §8:
-/// "unrelated to tap2know web's household-ledger multi-account reasoning... the JWT's only
-/// job here is proving an allowed household member is asking"). No Drive OAuth, no real
-/// filing yet.
+/// Milestone 3 (current): Drive OAuth (sign-in flow built; folder picker and real filing not
+/// yet). `DriveAuthStore` is a second, independent identity system from `AuthStore` (Supabase) —
+/// see `DriveSession.swift`'s header for why they're deliberately not unified.
 @main
 struct ReceiptScannerBillsApp: App {
     @StateObject private var auth = AuthStore()
+    @StateObject private var driveAuth = DriveAuthStore()
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(auth)
+                .environmentObject(driveAuth)
         }
     }
 }

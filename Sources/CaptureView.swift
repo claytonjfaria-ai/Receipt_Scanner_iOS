@@ -1,11 +1,12 @@
 import SwiftUI
 
-/// Milestone 2 of the real iOS Bills app: capture → assemble a durable on-device PDF →
-/// review + `extract-bill`. No Drive OAuth, no real filing yet — Review's Save persists
-/// confirmed metadata to a local sidecar as a stand-in (`BillMetadataStore`), matching
-/// Android's own milestone-2-equivalent choice.
+/// Milestone 3 of the real iOS Bills app: capture → assemble a durable on-device PDF →
+/// review + `extract-bill` → connect Google Drive. Review's Save still persists confirmed
+/// metadata to a local sidecar (`BillMetadataStore`) rather than filing for real — the
+/// folder picker and actual Drive upload aren't wired up yet, just the sign-in itself.
 struct CaptureView: View {
     @EnvironmentObject private var auth: AuthStore
+    @EnvironmentObject private var driveAuth: DriveAuthStore
 
     @State private var pages: [UIImage] = []
     @State private var isScannerPresented = false
@@ -14,6 +15,7 @@ struct CaptureView: View {
     @State private var stagedPDFs: [URL] = BillPdfStore.stagedPDFs()
     @State private var isSaving = false
     @State private var pendingReview: PendingBill?
+    @State private var isDriveConnecting = false
 
     var body: some View {
         NavigationStack {
@@ -21,6 +23,7 @@ struct CaptureView: View {
                 if !pages.isEmpty {
                     capturedSection
                 }
+                driveSection
                 resolutionSection
                 if !stagedPDFs.isEmpty {
                     stagedSection
@@ -148,6 +151,32 @@ struct CaptureView: View {
         }
     }
 
+    /// Milestone 3's actual new surface: sign-in only, no folder picker or real filing wired
+    /// up yet (§4.4's remaining pieces). A connected session doesn't do anything downstream of
+    /// this screen yet — Save still writes to the local metadata sidecar either way.
+    private var driveSection: some View {
+        Section {
+            if driveAuth.isConnected {
+                Label("Connected to Google Drive", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Button("Disconnect", role: .destructive) { driveAuth.disconnect() }
+            } else {
+                Button {
+                    connectDrive()
+                } label: {
+                    if isDriveConnecting {
+                        ProgressView()
+                    } else {
+                        Text("Connect Google Drive")
+                    }
+                }
+                .disabled(isDriveConnecting)
+            }
+        } footer: {
+            Text("Filing to Drive isn't wired up yet — this is sign-in only.")
+        }
+    }
+
     private var resolutionSection: some View {
         Section {
             Picker("Archive resolution", selection: $resolution) {
@@ -214,6 +243,18 @@ struct CaptureView: View {
     }
 
     // MARK: - Actions
+
+    private func connectDrive() {
+        isDriveConnecting = true
+        Task {
+            do {
+                try await driveAuth.signIn()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isDriveConnecting = false
+        }
+    }
 
     private func save() {
         // Page 1 has to survive past this point for `extract-bill` (§4.2) — captured before

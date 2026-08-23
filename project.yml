@@ -55,6 +55,17 @@ targets:
         # gitignored rather than hardcoded, same convention as everywhere else.
         SUPABASE_URL: ${SUPABASE_URL}
         SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
+        # Google OAuth callback (plan §4.4 Drive access) — the reversed-client-ID custom scheme
+        # Google's native-app flow uses in place of a Console-registered redirect URI list (the
+        # iOS OAuth client type has no such field). Must exactly match
+        # GoogleOAuthConfig.redirectURIScheme, hardcoded there for the same not-actually-a-secret
+        # reasoning as the client ID itself. `LSApplicationQueriesSchemes` isn't needed here —
+        # that's for canOpenURL checks against *other* apps' schemes, not for receiving a callback
+        # into this one.
+        CFBundleURLTypes:
+          - CFBundleURLName: com.tap2know.receiptscanner.bills.google-oauth
+            CFBundleURLSchemes:
+              - com.googleusercontent.apps.138014836118-cce333u1f9plimlr604141m9pbtvq6p0
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
