@@ -29,10 +29,13 @@ No Google Drive OAuth, no real filing yet.
 
 **Device-tested 2026-08-23, partially.** Sideloaded via SideStore onto a real iPad and
 launched correctly — no crash, sign-in screen renders, the Diagnostics section works (this
-is how the real bundle ID below was actually read). Not yet confirmed: sign-in or
-`extract-bill` actually working end to end, since the CI-built `.ipa` used for this pass had
-no real Supabase secrets (`secrets.env` is gitignored, by design — see Building, below). A
-locally-generated build with real secrets sourced first is what that would take.
+is how the real bundle ID below was actually read). Sign-in itself was **blocked** on this
+first pass: the CI-built `.ipa` had no real Supabase secrets, and — since there's no local
+Mac — CI is the *only* build path, so there was no working build to fall back to. Fixed
+same day by moving real secrets into this repo's GitHub Actions secrets (see Building,
+below) rather than relying on a local `secrets.env` source step that could never actually
+run. Sign-in and `extract-bill` are untested end to end as of this line; the next CI build
+should be the first one able to.
 
 Build order from here, matching the Android build order in the main plan:
 
@@ -86,7 +89,21 @@ main plan, not silently dropped.
 
 ## Building
 
-Same toolchain BillsCaptureTest already proved:
+**CI is the only real build path — there's no local Mac.** Every build that matters comes
+from `.github/workflows/ios-build.yml` on a GitHub Actions macOS runner, triggered by a
+push or `workflow_dispatch`. Real Supabase credentials are supplied there via this repo's
+own **Actions secrets** (`Settings → Secrets and variables → Actions`: `SUPABASE_URL`,
+`SUPABASE_ANON_KEY`) — **not** `secrets.env`, which only helps on a machine that can run
+`xcodegen`/`xcodebuild` locally. Get this wrong once already, 2026-08-23: an early version
+of this doc assumed a local-build fallback existed and pointed at `secrets.env` as "the"
+way to get a working build — every CI `.ipa` was silently stuck at "not configured" until
+this was fixed. Safe to bake real values into a public-repo CI build: `SUPABASE_ANON_KEY`
+is designed to be public-safe (RLS is the real access boundary), and `SUPABASE_URL` is
+just a project identifier, same reasoning already established for Android's own
+`BuildConfig`-embedded anon key.
+
+`secrets.env`/`secrets.env.example` are kept for the hypothetical case of building on an
+actual Mac someday:
 
 ```bash
 brew install xcodegen      # macOS only
@@ -98,12 +115,6 @@ xcodebuild -project ReceiptScannerBills.xcodeproj -scheme ReceiptScannerBills \
   -configuration Release -sdk iphoneos -derivedDataPath build \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
 ```
-
-`secrets.env` is gitignored — CI never has it, so CI builds compile fine but land with
-`SUPABASE_URL`/`SUPABASE_ANON_KEY` unresolved (`Secrets.swift` treats the literal
-`${VAR}` XcodeGen leaves behind as "not configured" and shows that plainly on the sign-in
-screen rather than failing confusingly). Source real values before generating whenever you
-want a build that can actually sign in and call `extract-bill`.
 
 ## Versioning
 

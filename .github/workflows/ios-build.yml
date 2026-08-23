@@ -28,6 +28,16 @@ jobs:
           # unique, monotonically-increasing number for free. See project.yml's comment on
           # CURRENT_PROJECT_VERSION for the split with MARKETING_VERSION.
           BUILD_NUMBER: ${{ github.run_number }}
+          # Real Supabase credentials, from this repo's own Actions secrets -- not secrets.env,
+          # which only helps on a machine that can run xcodegen/xcodebuild locally. This is the
+          # *only* build pipeline that exists (no local Mac), so without this every CI-built
+          # .ipa would be permanently stuck at "not configured," unable to sign in at all.
+          # Safe on a public repo: SUPABASE_ANON_KEY is designed to be public-safe (RLS is the
+          # real access boundary, same reasoning already established for the Android app's own
+          # BuildConfig-embedded anon key) and SUPABASE_URL is just a project identifier.
+          # Configured under Settings -> Secrets and variables -> Actions.
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: xcodegen generate
 
       - name: Show toolchain and project format

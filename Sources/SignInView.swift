@@ -52,8 +52,12 @@ struct SignInView: View {
                 // has nothing to do with being signed in, and a build with no Supabase secrets
                 // configured can never get past this screen to reach the other one. Found live
                 // on-device 2026-08-23: the diagnostics-only-after-sign-in design was a mistake.
+                // Version is here for the same reason, added the same day: confirming which
+                // .ipa is actually installed (matching it against the downloaded filename)
+                // shouldn't require signing in either.
                 Section("Diagnostics") {
                     CopyableRow(label: "Bundle ID", value: Bundle.main.bundleIdentifier ?? "unknown")
+                    CopyableRow(label: "Version", value: "\(shortVersion) (\(buildNumber))")
                 }
             }
             .navigationTitle("Bills")
@@ -75,5 +79,13 @@ struct SignInView: View {
             }
             isSigningIn = false
         }
+    }
+
+    private var shortVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+    }
+
+    private var buildNumber: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
     }
 }
