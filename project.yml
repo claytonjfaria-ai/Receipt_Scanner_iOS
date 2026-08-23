@@ -8,8 +8,17 @@ options:
 
 settings:
   base:
+    # The human milestone marker -- bumped "by feel" at real milestones, same split the main
+    # plan already uses for Android's versionName/versionCode. Not CI-driven, unlike the build
+    # number below: this one is a judgment call, not something to automate.
     MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    # ${BUILD_NUMBER} via XcodeGen's generate-time env substitution (same mechanism Secrets.swift
+    # uses) -- CI sets this to the GitHub Actions run number, so every CI build gets a real,
+    # unique, monotonically-increasing CFBundleVersion with no manual bookkeeping. Local builds:
+    # export BUILD_NUMBER=0 (or anything) before `xcodegen generate`, same as secrets.env --
+    # unset, this literally reads "${BUILD_NUMBER}" in Diagnostics, which is a fine tell that
+    # you're looking at a local build, not a CI one.
+    CURRENT_PROJECT_VERSION: ${BUILD_NUMBER}
     SWIFT_VERSION: "5.9"
     # Unsigned CI builds: SideStore re-signs with the free Apple ID at install time.
     # Proven end to end against this exact combination in BillsCaptureTest, 2026-08-18

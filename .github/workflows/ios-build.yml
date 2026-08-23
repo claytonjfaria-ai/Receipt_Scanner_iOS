@@ -23,6 +23,11 @@ jobs:
         run: brew install xcodegen
 
       - name: Generate Xcode project
+        env:
+          # Auto-incrementing build number (CFBundleVersion) -- every CI build gets a real,
+          # unique, monotonically-increasing number for free. See project.yml's comment on
+          # CURRENT_PROJECT_VERSION for the split with MARKETING_VERSION.
+          BUILD_NUMBER: ${{ github.run_number }}
         run: xcodegen generate
 
       - name: Show toolchain and project format
@@ -65,21 +70,43 @@ jobs:
             CODE_SIGN_ENTITLEMENTS="" \
             build
 
-      # An .ipa is just a zip with the .app inside a Payload/ directory.
+      # Read back the version actually baked into the built app -- not recomputed separately,
+      # so the filename below can never drift from what's really in the binary (and what the
+      # app's own Diagnostics screen will show once installed).
+      - name: Read built version
+        id: version
+        run: |
+          set -euo pipefail
+          APP_PATH="build/Build/Products/Release-iphoneos/ReceiptScannerBills.app"
+          SHORT=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_PATH/Info.plist")
+          BUILD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP_PATH/Info.plist")
+          echo "Version: $SHORT ($BUILD)"
+          echo "short=$SHORT" >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+
+      # An .ipa is just a zip with the .app inside a Payload/ directory. Filename carries the
+      # version/build so a download never silently overwrites a previous one on disk, and so
+      # what's on Desktop always matches what the app's Diagnostics screen shows once installed
+      # -- the actual point of this (see project.yml's CURRENT_PROJECT_VERSION comment).
       - name: Package .ipa
+        id: package
         run: |
           set -euo pipefail
           APP_PATH="build/Build/Products/Release-iphoneos/ReceiptScannerBills.app"
           test -d "$APP_PATH" || { echo "::error::app bundle not found at $APP_PATH"; exit 1; }
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
-          zip -qry ReceiptScannerBills-unsigned.ipa Payload
-          ls -lh ReceiptScannerBills-unsigned.ipa
+          IPA_NAME="ReceiptScannerBills-${{ steps.version.outputs.short }}-b${{ steps.version.outputs.build }}-unsigned.ipa"
+          zip -qry "$IPA_NAME" Payload
+          ls -lh "$IPA_NAME"
+          echo "ipa_name=$IPA_NAME" >> "$GITHUB_OUTPUT"
 
+      # Artifact name itself stays stable/predictable across runs (easy to `gh run download -n
+      # ...` without looking up a version first) -- the versioning lives in the file inside it.
       - name: Upload .ipa
         uses: actions/upload-artifact@v4
         with:
           name: ReceiptScannerBills-unsigned-ipa
-          path: ReceiptScannerBills-unsigned.ipa
+          path: ${{ steps.package.outputs.ipa_name }}
           if-no-files-found: error
           retention-days: 30

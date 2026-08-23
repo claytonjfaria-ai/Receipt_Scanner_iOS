@@ -81,6 +81,7 @@ Same toolchain BillsCaptureTest already proved:
 brew install xcodegen      # macOS only
 cp secrets.env.example secrets.env   # fill in real values, then:
 source secrets.env
+export BUILD_NUMBER=0      # any value — CI uses its own run number instead
 xcodegen generate
 xcodebuild -project ReceiptScannerBills.xcodeproj -scheme ReceiptScannerBills \
   -configuration Release -sdk iphoneos -derivedDataPath build \
@@ -92,6 +93,17 @@ xcodebuild -project ReceiptScannerBills.xcodeproj -scheme ReceiptScannerBills \
 `${VAR}` XcodeGen leaves behind as "not configured" and shows that plainly on the sign-in
 screen rather than failing confusingly). Source real values before generating whenever you
 want a build that can actually sign in and call `extract-bill`.
+
+## Versioning
+
+`MARKETING_VERSION` (currently `0.1.0`, in `project.yml`) is the human milestone marker,
+bumped by feel — same split the main plan uses for Android's `versionName`. The build
+number (`CURRENT_PROJECT_VERSION`) is never hand-set: CI sets it to the GitHub Actions run
+number automatically, so every CI build gets a real, unique, monotonically-increasing
+number with no bookkeeping. The packaged `.ipa`'s filename embeds both
+(`ReceiptScannerBills-0.1.0-b47-unsigned.ipa`), read back from the actual built app rather
+than recomputed — so the file on disk, the artifact on GitHub, and the Version row on the
+sign-in screen's Diagnostics section always agree on exactly what build you're looking at.
 
 In practice this runs on a GitHub Actions macOS runner (`.github/workflows/ios-build.yml`,
 `workflow_dispatch` or push to `main`) — no local Mac needed. Sign and install the
