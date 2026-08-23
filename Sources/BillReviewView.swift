@@ -44,6 +44,13 @@ struct BillReviewView: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
 
+    // §4.7 PII redaction.
+    @State private var pageCount = 1
+    @State private var redactionRegions: [RedactionRegion] = []
+    @State private var redactionEditorOpen = false
+    @State private var redactionCurrentPage = 0
+    @State private var redactionSuggestionsAttempted = false
+
     /// The extraction's raw, un-normalized `company_name` — deliberately never touched by the
     /// `companyName` text field binding above. See `FilingDecision`'s kdoc for why the
     /// rules-cache lookup key must stay this exact string. `nil` if extraction never succeeded
@@ -62,6 +69,7 @@ struct BillReviewView: View {
         let filingDate: SimpleDate
         let amount: Double?
         let pdfData: Data
+        let redactionUpdate: BillFilingService.RedactionUpdate?
     }
 
     @State private var pendingFiling: PendingFiling?
@@ -123,6 +131,21 @@ struct BillReviewView: View {
         .task(id: pending.id) {
             startExtraction()
         }
+        .task(id: pending.id) {
+            // Display-only -- never blocks Review from working if this fails. Defaults to 1
+            // (already the initial value) so the page navigator just doesn't show until this
+            // resolves, matching a single-page bill's own steady state.
+            pageCount = (try? BillPageRenderer.pageCount(of: pending.pdfURL)) ?? 1
+        }
+        .fullScreenCover(isPresented: $redactionEditorOpen) {
+            RedactionEditorView(
+                pdfURL: pending.pdfURL,
+                pageCount: pageCount,
+                currentPage: $redactionCurrentPage,
+                regions: $redactionRegions,
+                onDone: { redactionEditorOpen = false }
+            )
+        }
         .alert("Similar folder found", isPresented: isNearMissPresented) {
             Button("Use \u{201C}\(nearMissExisting ?? "")\u{201D}") { onNearMissChoice(useExisting: true) }
             Button("Create \u{201C}\(nearMissProposed ?? "")\u{201D}") { onNearMissChoice(useExisting: false) }
@@ -176,8 +199,16 @@ struct BillReviewView: View {
         }
 
         Section {
+            Button(redactionButtonLabel) { redactionEditorOpen = true }
+        }
+
+        Section {
             Button("Discard", role: .destructive) { discard() }
         }
+    }
+
+    private var redactionButtonLabel: String {
+        redactionRegions.isEmpty ? "Redact sensitive info" : "Redact sensitive info (\(redactionRegions.count) marked)"
     }
 
     private var canFileToDrive: Bool {
@@ -204,6 +235,7 @@ struct BillReviewView: View {
                 let result = try await ExtractBillClient.extract(page: pending.extractionPage, accessToken: token)
                 apply(result)
                 isExtracting = false
+                loadRedactionSuggestions()
             } catch {
                 if retryCount < maxAutomaticRetries {
                     retryCount += 1
@@ -222,6 +254,34 @@ struct BillReviewView: View {
         rawExtractedCompanyName = result.companyName
         amountText = result.amount.map { String(format: "%.2f", $0) } ?? ""
         billingDateText = result.billingDate ?? ""
+    }
+
+    // MARK: - Redaction
+
+    /// §4.7's "learned suggestion" — best-effort only, called once after extraction finishes.
+    /// Silently does nothing if Drive isn't connected, no Scans folder is chosen yet, or the
+    /// lookup fails for any reason — a missing suggestion just means the user draws the box by
+    /// hand this once, same as any first-time bill; it must never interrupt Review.
+    private func loadRedactionSuggestions() {
+        guard !redactionSuggestionsAttempted else { return }
+        let trimmed = companyName.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, canFileToDrive, let scansFolder = folderPreferences.scansFolder else { return }
+        redactionSuggestionsAttempted = true
+
+        Task {
+            do {
+                let token = try await driveAuth.validAccessToken()
+                let context = try await BillFilingService.loadContext(accessToken: token, scansFolder: scansFolder, driveAPI: RealDriveAPI())
+                let normalized = CompanyNameNormalizer.normalize(trimmed)
+                let suggested = RedactionRuleMatcher.suggestRegions(normalizedCompanyName: normalized, redactionRulesCache: context.redactionRulesCache)
+                guard !suggested.isEmpty else { return }
+                redactionRegions = suggested
+                redactionEditorOpen = true
+                redactionCurrentPage = suggested.first?.page ?? 0
+            } catch {
+                // Non-fatal by design -- see this function's own header.
+            }
+        }
     }
 
     // MARK: - Save
@@ -244,7 +304,14 @@ struct BillReviewView: View {
                 let normalized = CompanyNameNormalizer.normalize(trimmedName)
                 let raw = rawExtractedCompanyName ?? trimmedName
                 let filingDate = BillFileNaming.resolveFilingDate(billingDate: billingDate, captureDate: .today())
-                let pdfData = try Data(contentsOf: pending.pdfURL)
+                let pdfData = try readPdfDataForFiling()
+
+                // Only sent when the user actually interacted with redaction this bill (see
+                // `BillFilingService.RedactionUpdate`'s kdoc) -- a bill saved with the editor
+                // never opened must leave any previously learned rule for this company untouched.
+                let redactionUpdate: BillFilingService.RedactionUpdate? = redactionRegions.isEmpty
+                    ? nil
+                    : BillFilingService.RedactionUpdate(normalizedCompanyName: normalized, regions: redactionRegions)
 
                 pendingFiling = PendingFiling(
                     accessToken: token,
@@ -254,7 +321,8 @@ struct BillReviewView: View {
                     normalizedCompanyName: normalized,
                     filingDate: filingDate,
                     amount: amount,
-                    pdfData: pdfData
+                    pdfData: pdfData,
+                    redactionUpdate: redactionUpdate
                 )
                 await runFilingPipeline()
             } catch {
@@ -262,6 +330,19 @@ struct BillReviewView: View {
                 isSaving = false
             }
         }
+    }
+
+    /// §4.7: the file that actually goes to Drive is never the original when any region has been
+    /// confirmed — `PdfRedactor` rewrites every page into a fresh PDF first, so the original
+    /// pixels never leave the device. Reads the untouched original straight through when there's
+    /// nothing to redact, the common case (utility/insurance bills with nothing sensitive
+    /// printed on the page). The redacted temp file is deleted right after its bytes are read —
+    /// its only job was getting those bytes to Drive, not sticking around in staging.
+    private func readPdfDataForFiling() throws -> Data {
+        guard !redactionRegions.isEmpty else { return try Data(contentsOf: pending.pdfURL) }
+        let redactedURL = try PdfRedactor.redact(sourcePDF: pending.pdfURL, regions: redactionRegions, profile: BillCapturePreferences.resolution)
+        defer { try? FileManager.default.removeItem(at: redactedURL) }
+        return try Data(contentsOf: redactedURL)
     }
 
     /// Pre-Drive fallback (unchanged from before this milestone): Drive isn't connected, or no
@@ -338,7 +419,8 @@ struct BillReviewView: View {
                 matchScore: matchScore,
                 deviceLabel: UIDevice.current.name,
                 pdfData: pf.pdfData,
-                driveAPI: driveAPI
+                driveAPI: driveAPI,
+                redactionUpdate: pf.redactionUpdate
             )
             // Filed for real now — the local staged copy (and its sidecar, if any) has served
             // its purpose. Best-effort: a failed local cleanup shouldn't turn a successful Drive

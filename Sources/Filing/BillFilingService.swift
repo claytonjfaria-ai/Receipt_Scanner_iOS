@@ -10,11 +10,11 @@ import Foundation
 /// written. `fileDocument` does the actual write — folder creation, upload, `Rules_Learned.json`
 /// update — once a decision, resolved automatically or confirmed by the user, is in hand.
 ///
-/// **Deliberately smaller than Android's version at this milestone:** no redaction parameter —
-/// iOS hasn't built §4.7 (PII redaction) yet. `redactionRulesCache` is still read and always
-/// written back completely unchanged on every filing, though — `RulesLearnedFile`'s own kdoc is
-/// explicit that omitting the key on write would silently erase whatever Android already learned
-/// for a shared household archive, not just leave it untouched.
+/// §4.7 PII redaction: `fileDocument`'s optional `redactionUpdate` parameter is what the user
+/// confirmed on Review this bill, present only when they actually touched the redaction editor —
+/// a bill filed without any redaction interaction must never clobber a company's previously
+/// learned rule back to nothing, so `redactionRulesCache` is written back completely unchanged
+/// whenever it's `nil`.
 enum BillFilingService {
     private static let rulesLearnedFileName = "Rules_Learned.json"
 
@@ -40,6 +40,14 @@ enum BillFilingService {
         let folderName: String
         let fileName: String
         let folderCreated: Bool
+    }
+
+    /// §4.7: what the user confirmed on Review this bill, only present when they actually
+    /// touched redaction. Deliberately optional — see this enum's own header for why `nil` must
+    /// leave `redactionRulesCache` untouched rather than writing back an empty map.
+    struct RedactionUpdate {
+        let normalizedCompanyName: String
+        let regions: [RedactionRegion]
     }
 
     /// The one network-heavy read of a filing attempt: the `Scans/` root's subfolders (for
@@ -109,7 +117,8 @@ enum BillFilingService {
         matchScore: Double?,
         deviceLabel: String,
         pdfData: Data,
-        driveAPI: DriveAPI
+        driveAPI: DriveAPI,
+        redactionUpdate: RedactionUpdate? = nil
     ) async throws -> FilingResult {
         let existingFolder = context.existingFolders.first(where: { $0.name == folderName })
         let targetFolder: DriveFolder
@@ -142,7 +151,10 @@ enum BillFilingService {
         )
 
         let updatedRules = FilingDecision.withRuleLearned(context.rulesCache, rawCompanyName: rawCompanyName, folderName: folderName)
-        try await writeRulesLearned(accessToken: accessToken, context: context, rules: updatedRules, redactionRules: context.redactionRulesCache, driveAPI: driveAPI)
+        let updatedRedactionRules = redactionUpdate.map {
+            RedactionRuleMatcher.withRuleLearned(context.redactionRulesCache, normalizedCompanyName: $0.normalizedCompanyName, regions: $0.regions)
+        } ?? context.redactionRulesCache
+        try await writeRulesLearned(accessToken: accessToken, context: context, rules: updatedRules, redactionRules: updatedRedactionRules, driveAPI: driveAPI)
 
         return FilingResult(folderName: folderName, fileName: fileName, folderCreated: folderCreated)
     }

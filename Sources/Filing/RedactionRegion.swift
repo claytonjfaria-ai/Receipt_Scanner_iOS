@@ -9,7 +9,7 @@ import Foundation
 ///
 /// Plan §4.7: "recorded as a normalized rectangle (fraction of page width/height, 0.0–1.0) ...
 /// because the DPI picker means captured page dimensions vary by setting."
-struct NormalizedRect: Codable, Equatable {
+struct NormalizedRect: Codable, Equatable, Hashable {
     let x: Double
     let y: Double
     let width: Double
@@ -17,7 +17,10 @@ struct NormalizedRect: Codable, Equatable {
 }
 
 /// One redaction box tied to a specific page of the archived PDF. `page` is 0-based.
-struct RedactionRegion: Codable, Equatable {
+///
+/// `Hashable`, not just `Equatable`: §4.7's redaction editor (`RedactionEditorView`) needs it for
+/// `ForEach(regionsOnPage, id: \.self)` over the boxes drawn on one page.
+struct RedactionRegion: Codable, Equatable, Hashable {
     let page: Int
     let rect: NormalizedRect
 }
