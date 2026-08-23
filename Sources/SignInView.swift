@@ -46,6 +46,15 @@ struct SignInView: View {
                     }
                     .disabled(isSigningIn || email.isEmpty || password.isEmpty || !Secrets.isConfigured)
                 }
+
+                // Deliberately on THIS screen, not only inside CaptureView's own Diagnostics
+                // section — reading the real bundle ID (plan §4.4's OAuth-client prerequisite)
+                // has nothing to do with being signed in, and a build with no Supabase secrets
+                // configured can never get past this screen to reach the other one. Found live
+                // on-device 2026-08-23: the diagnostics-only-after-sign-in design was a mistake.
+                Section("Diagnostics") {
+                    CopyableRow(label: "Bundle ID", value: Bundle.main.bundleIdentifier ?? "unknown")
+                }
             }
             .navigationTitle("Bills")
             .alert("Couldn't sign in", isPresented: .constant(errorMessage != nil)) {
