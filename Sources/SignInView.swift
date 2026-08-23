@@ -23,18 +23,10 @@ struct SignInView: View {
                 BillScannerBackground()
 
                 ScrollView {
-                    VStack(spacing: 20) {
-                        card
-                        // Small and secondary on purpose, not folded into the card itself:
-                        // this is diagnostic info (bundle ID + build, for registering Google's
-                        // OAuth client and confirming which .ipa is installed), not part of the
-                        // sign-in flow a real user cares about. Still visible on this screen
-                        // without signing in first -- see this section's own history below.
-                        diagnostics
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 40)
-                    .frame(minHeight: geometry.size.height)
+                    card
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 40)
+                        .frame(minHeight: geometry.size.height)
                 }
             }
         }
@@ -123,33 +115,6 @@ struct SignInView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(.systemGray4)))
         }
-    }
-
-    // MARK: - Diagnostics
-
-    /// Deliberately on THIS screen, not only inside `CaptureView`'s own Diagnostics section —
-    /// reading the real bundle ID (plan §4.4's OAuth-client prerequisite) has nothing to do
-    /// with being signed in. Found live on-device 2026-08-23: gating this behind sign-in was a
-    /// mistake, since a build with broken secrets can never reach the other screen. Wrapped in
-    /// its own solid card, not placed directly on the teal background: `CopyableRow` uses
-    /// `.secondary`/default-`.primary` text colors meant for a light background, and this
-    /// redesign shouldn't have to fork that shared component just to sit on a colored one.
-    private var diagnostics: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            CopyableRow(label: "Bundle ID", value: Bundle.main.bundleIdentifier ?? "unknown")
-            CopyableRow(label: "Version", value: "\(shortVersion) (\(buildNumber))")
-        }
-        .padding(14)
-        .background(Color.white.opacity(0.92))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-    }
-
-    private var shortVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-    }
-
-    private var buildNumber: String {
-        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
     }
 
     // MARK: - Actions
