@@ -61,6 +61,25 @@ struct CaptureView: View {
                     }
                 )
                 .ignoresSafeArea()
+                // Safety net, not a duplicate: on a real device (2026-08-23, Clayton's iPad)
+                // VNDocumentCameraViewController's own top toolbar -- where its built-in Cancel
+                // and flash controls normally live -- didn't render at all, most likely because
+                // `.ignoresSafeArea()` above interferes with how that system view controller lays
+                // out controls anchored to the safe area. Rather than chase VisionKit's internal
+                // layout, this button is placed and hardcoded-padded independent of it, so an exit
+                // exists regardless of whether that root cause is right.
+                .overlay(alignment: .topLeading) {
+                    Button("Cancel") {
+                        isScannerPresented = false
+                    }
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.black.opacity(0.5), in: Capsule())
+                    .padding(.top, 50)
+                    .padding(.leading, 16)
+                }
             }
             // navigationDestination(item:) needs iOS 17; this target is 16.0 (matching
             // BillsCaptureTest, deliberately, for the same device-compatibility reasons).
@@ -133,8 +152,6 @@ struct CaptureView: View {
             .listRowInsets(EdgeInsets())
             .padding(.horizontal)
             .padding(.vertical, 8)
-
-            Button("Scan more pages") { isScannerPresented = true }
 
             Button {
                 save()
