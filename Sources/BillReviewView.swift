@@ -98,7 +98,11 @@ struct BillReviewView: View {
                 .keyboardType(.decimalPad)
             TextField("Billing date, e.g. 2026-08-12 (optional)", text: $billingDateText)
         } footer: {
-            Text("Only company is required — some documents (like a policy renewal packet) have no amount due or date printed.")
+            // Found live 2026-08-23: a real test round scanned and saved a bill, then couldn't
+            // find it in Drive — reasonably, since nothing here says Save doesn't file there
+            // yet. Made explicit rather than left implicit in the Bills screen's own footer,
+            // since this is the screen where that expectation actually forms.
+            Text("Only company is required — some documents (like a policy renewal packet) have no amount due or date printed. Save keeps this on the phone for now — filing to Drive isn't built yet.")
         }
 
         Section {
