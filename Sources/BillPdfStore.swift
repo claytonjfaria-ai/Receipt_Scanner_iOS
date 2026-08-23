@@ -54,7 +54,10 @@ enum BillPdfStore {
     /// (mirrors Android's `onDiscardConfirmed`, plan §4.4). Throws rather than silently
     /// swallowing a failed delete — the exact `deleteRecursively` silent-failure bug hit on
     /// Android (returns `false` instead of throwing) is the thing to avoid repeating here.
+    /// Also removes the metadata sidecar, if one was ever written — best-effort, since an
+    /// orphaned sidecar is harmless but a missing PDF the sidecar still points at is not.
     static func delete(_ url: URL) throws {
         try FileManager.default.removeItem(at: url)
+        BillMetadataStore.delete(for: url)
     }
 }

@@ -109,7 +109,10 @@ enum PDFBuilder {
         cg.restoreGState()
     }
 
-    private static func downscale(_ image: UIImage, maxLongEdge: CGFloat) -> UIImage {
+    /// Internal, not private: `ExtractionImageEncoder` reuses this for its own, independent
+    /// downscale target — §4.2 is explicit that the archive resolution and the extraction
+    /// resolution are two different requirements that must not be tied together.
+    static func downscale(_ image: UIImage, maxLongEdge: CGFloat) -> UIImage {
         let pixelSize = CGSize(
             width: image.size.width * image.scale,
             height: image.size.height * image.scale

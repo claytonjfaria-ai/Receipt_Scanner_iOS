@@ -34,6 +34,18 @@ targets:
         # VisionKit document scanner needs this or the app hard-crashes on first scan
         # (plan §8, confirmed in BillsCaptureTest).
         NSCameraUsageDescription: Used to capture bill pages with the document scanner.
+        # Supabase project URL/anon key — mirrors Android's BuildConfig-field approach,
+        # via XcodeGen's own env-var substitution (resolved when `xcodegen generate`
+        # runs, from the shell environment — NOT an Xcode build setting, hence ${...}
+        # rather than $(...)). Export SUPABASE_URL / SUPABASE_ANON_KEY before running
+        # `xcodegen generate` locally; unset in CI, where XcodeGen leaves the literal
+        # "${SUPABASE_URL}" string in place rather than failing — Secrets.swift treats
+        # any value still starting with "${" as unconfigured. Neither value is a secret
+        # in the sense that matters here (RLS/JWT do the real access control, same as
+        # the Android app — Secrets management in the main plan), but they're still
+        # gitignored rather than hardcoded, same convention as everywhere else.
+        SUPABASE_URL: ${SUPABASE_URL}
+        SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false

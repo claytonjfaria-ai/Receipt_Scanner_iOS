@@ -12,22 +12,37 @@ Swift/SwiftUI only.
 
 ## Status
 
-**Milestone 1 — capture only.** VisionKit scan → assemble a durable on-device multi-page
-PDF at the user's chosen archive resolution (150/200/300 DPI, sticky, default 200 —
-plan §4.1). No `extract-bill` call, no Google Drive OAuth, no filing yet.
+**Milestone 2 — capture + review + `extract-bill`.** VisionKit scan → assemble a durable
+on-device multi-page PDF at the user's chosen archive resolution (150/200/300 DPI, sticky,
+default 200 — plan §4.1) → review screen calling the real `extract-bill` Edge Function
+(plan §4.2, §4.3), with §4.6 Tier 2's bounded retry (2 automatic, 3s delay, then manual
+Retry). Sign-in is new at this milestone: a minimal Supabase Auth email/password screen,
+needed only to obtain the JWT `extract-bill`'s `verify_jwt` gate requires (plan §8) — hand-
+rolled against GoTrue's REST API directly rather than pulling in the `supabase-swift` SDK,
+to keep the unsigned-CI-build pipeline free of SPM dependency resolution.
 
-Not yet device-tested. Compiles is the only claim made so far; run it through CI and a
-real sideload before trusting the capture/compression path on-device.
+Review's Save persists confirmed company/amount/billing-date to a local JSON sidecar
+(`BillMetadataStore`) next to the staged PDF — a stand-in for real Drive filing, mirroring
+Android's own milestone-2-equivalent choice exactly.
+
+No Google Drive OAuth, no real filing yet.
+
+Not yet device-tested. Compiles is the only claim made so far — confirmed by CI (milestone
+1), not yet re-confirmed for milestone 2's async/Task code, which no compiler on this dev
+machine can check ahead of a push. Run it through CI and a real sideload, with a real
+`secrets.env` sourced first (see below), before trusting sign-in or extraction on-device.
 
 Build order from here, matching the Android build order in the main plan:
 
-1. ~~Capture — VisionKit → local PDF~~ (this milestone)
-2. Review screen + `extract-bill` call (plan §4.2, §4.3)
+1. ~~Capture — VisionKit → local PDF~~ (milestone 1)
+2. ~~Review screen + `extract-bill` call~~ (this milestone)
 3. Drive OAuth + filing (plan §4.4) — **blocked** until the rewritten-bundle-ID-stability
    question in §8's open items is settled, since the OAuth client has to be registered
    against whatever bundle ID sideloading actually produces
 4. PII redaction (plan §4.7)
-5. Reliability tiers (plan §4.6)
+5. Reliability tiers (plan §4.6) — currently just Tier 1 (durable local save) and a partial
+   Tier 2 (bounded retry on extraction); no Tier 3 persist-until-filed yet, since there's
+   nothing to file to
 
 ## Why this exists before Android Bills is formally "trusted"
 
@@ -43,11 +58,19 @@ Same toolchain BillsCaptureTest already proved:
 
 ```bash
 brew install xcodegen      # macOS only
+cp secrets.env.example secrets.env   # fill in real values, then:
+source secrets.env
 xcodegen generate
 xcodebuild -project ReceiptScannerBills.xcodeproj -scheme ReceiptScannerBills \
   -configuration Release -sdk iphoneos -derivedDataPath build \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
 ```
+
+`secrets.env` is gitignored — CI never has it, so CI builds compile fine but land with
+`SUPABASE_URL`/`SUPABASE_ANON_KEY` unresolved (`Secrets.swift` treats the literal
+`${VAR}` XcodeGen leaves behind as "not configured" and shows that plainly on the sign-in
+screen rather than failing confusingly). Source real values before generating whenever you
+want a build that can actually sign in and call `extract-bill`.
 
 In practice this runs on a GitHub Actions macOS runner (`.github/workflows/ios-build.yml`,
 `workflow_dispatch` or push to `main`) — no local Mac needed. Sign and install the

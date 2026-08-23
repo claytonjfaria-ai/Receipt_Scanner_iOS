@@ -1,15 +1,19 @@
 import SwiftUI
 
-/// Milestone 1 of the real iOS Bills app: capture → assemble a durable on-device PDF.
-/// No `extract-bill` call, no Drive OAuth, no filing — those are later milestones, built up
-/// in the same order the Android build followed (plan §4.1 → §4.2 → §4.4).
+/// Milestone 2 of the real iOS Bills app: capture → assemble a durable on-device PDF →
+/// review + `extract-bill`. No Drive OAuth, no real filing yet — Review's Save persists
+/// confirmed metadata to a local sidecar as a stand-in (`BillMetadataStore`), matching
+/// Android's own milestone-2-equivalent choice.
 struct CaptureView: View {
+    @EnvironmentObject private var auth: AuthStore
+
     @State private var pages: [UIImage] = []
     @State private var isScannerPresented = false
     @State private var errorMessage: String?
     @State private var resolution = BillCapturePreferences.resolution
     @State private var stagedPDFs: [URL] = BillPdfStore.stagedPDFs()
     @State private var isSaving = false
+    @State private var pendingReview: PendingBill?
 
     var body: some View {
         NavigationStack {
@@ -24,6 +28,9 @@ struct CaptureView: View {
             }
             .navigationTitle("Bills")
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Sign out", role: .destructive) { auth.signOut() }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
                         isScannerPresented = true
@@ -50,6 +57,12 @@ struct CaptureView: View {
                     }
                 )
                 .ignoresSafeArea()
+            }
+            .navigationDestination(item: $pendingReview) { pending in
+                BillReviewView(pending: pending) {
+                    pendingReview = nil
+                    stagedPDFs = BillPdfStore.stagedPDFs()
+                }
             }
             .alert("Something went wrong", isPresented: .constant(errorMessage != nil)) {
                 Button("OK") { errorMessage = nil }
@@ -163,13 +176,21 @@ struct CaptureView: View {
     // MARK: - Actions
 
     private func save() {
+        // Page 1 has to survive past this point for `extract-bill` (§4.2) — captured before
+        // `pages` is cleared, since the assembled PDF is already compressed to the archive's
+        // DPI setting, a different resolution than extraction wants. Checked before touching
+        // `isSaving` — this button is only ever shown when `pages` is non-empty (capturedSection
+        // above), so `nil` here would mean the button rendered for an already-empty capture
+        // list, not a real save attempt.
+        guard let extractionPage = pages.first else { return }
+
         isSaving = true
         let fileName = "bill_\(UUID().uuidString).pdf"
         do {
             let url = try PDFBuilder.makePDF(from: pages, fileName: fileName)
             pages = []
             stagedPDFs = BillPdfStore.stagedPDFs()
-            _ = url // reserved for the review-screen handoff in the next milestone
+            pendingReview = PendingBill(pdfURL: url, extractionPage: extractionPage)
         } catch {
             errorMessage = error.localizedDescription
         }
