@@ -9,12 +9,10 @@ struct CaptureView: View {
     @EnvironmentObject private var driveAuth: DriveAuthStore
     @EnvironmentObject private var folderPreferences: DriveFolderPreferences
 
-    @State private var pages: [UIImage] = []
     @State private var isScannerPresented = false
     @State private var errorMessage: String?
     @State private var resolution = BillCapturePreferences.resolution
     @State private var stagedPDFs: [URL] = BillPdfStore.stagedPDFs()
-    @State private var isSaving = false
     @State private var pendingReview: PendingBill?
     @State private var isDriveConnecting = false
     @State private var isFolderPickerPresented = false
@@ -22,9 +20,6 @@ struct CaptureView: View {
     var body: some View {
         NavigationStack {
             List {
-                if !pages.isEmpty {
-                    capturedSection
-                }
                 driveSection
                 resolutionSection
                 if !stagedPDFs.isEmpty {
@@ -46,15 +41,15 @@ struct CaptureView: View {
                 }
             }
             .overlay {
-                if pages.isEmpty && stagedPDFs.isEmpty {
+                if stagedPDFs.isEmpty {
                     emptyState
                 }
             }
             .fullScreenCover(isPresented: $isScannerPresented) {
                 DocumentScanner(
                     onFinish: { captured in
-                        pages = captured
                         isScannerPresented = false
+                        handleCaptured(captured)
                     },
                     onCancel: { isScannerPresented = false },
                     onError: { error in
@@ -140,39 +135,6 @@ struct CaptureView: View {
         }
     }
 
-    private var capturedSection: some View {
-        Section("Captured — \(pages.count) page\(pages.count == 1 ? "" : "s")") {
-            ScrollView(.horizontal) {
-                HStack(spacing: 12) {
-                    ForEach(Array(pages.enumerated()), id: \.offset) { _, image in
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(height: 120)
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
-                    }
-                }
-            }
-            .listRowInsets(EdgeInsets())
-            .padding(.horizontal)
-            .padding(.vertical, 8)
-
-            Button {
-                save()
-            } label: {
-                if isSaving {
-                    ProgressView()
-                } else {
-                    Text("Save")
-                }
-            }
-            .disabled(isSaving)
-
-            Button("Discard", role: .destructive) { pages = [] }
-        }
-    }
-
     /// Milestone 3's full surface: sign-in, the Scans folder picker, and real filing
     /// (`BillFilingService`, wired into `BillReviewView.save()`) are all live now. A connected
     /// session with no folder chosen yet still can't file anything, hence the extra prompt below.
@@ -232,22 +194,36 @@ struct CaptureView: View {
         }
     }
 
+    /// PLAN-MOBILE-BILLS-CAPTURE.md §4.6 Tier 3's own on-screen surface: "a small '1 bill not
+    /// yet filed' indicator ... retryable on next app open." Every row is tappable, not just a
+    /// single "resume the newest" button the way Android's `UnfiledBillsNotice` is — iOS already
+    /// shows individual filenames here, so tap-to-resume *this specific* bill is strictly more
+    /// useful when more than one is genuinely stuck, at no extra cost over Android's plainer
+    /// version.
     private var stagedSection: some View {
         // A String title plus a `footer:` closure isn't a valid `Section` overload — SwiftUI
         // only pairs a footer with a `header:` closure, not the plain-string title form.
         // Caught by the CI build (exit 65), not locally — no Swift compiler on this machine.
         Section {
             ForEach(stagedPDFs, id: \.self) { url in
-                HStack {
-                    VStack(alignment: .leading) {
-                        Text(url.lastPathComponent)
-                            .font(.subheadline)
-                        Text(PDFBuilder.fileSizeDescription(of: url))
+                Button {
+                    openStagedBill(url)
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(url.lastPathComponent)
+                                .font(.subheadline)
+                            Text(PDFBuilder.fileSizeDescription(of: url))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.tertiary)
                     }
-                    Spacer()
                 }
+                .buttonStyle(.plain)
                 .swipeActions {
                     Button("Delete", role: .destructive) { discard(url) }
                 }
@@ -255,9 +231,7 @@ struct CaptureView: View {
         } header: {
             Text("Saved, not yet filed — \(stagedPDFs.count)")
         } footer: {
-            // Honest about a real gap, not a promise this screen can't keep: there's no
-            // re-open-and-refile action here yet, so these stay stuck until that's built.
-            Text("Saved before Drive was connected or a Scans folder was chosen, so these weren't filed. Re-filing an already-staged bill isn't built yet.")
+            Text("Not filed yet — Drive wasn't connected, no Scans folder was chosen, or a previous filing attempt failed. Tap a bill to reopen Review and finish filing it.")
         }
     }
 
@@ -296,26 +270,48 @@ struct CaptureView: View {
         }
     }
 
-    private func save() {
-        // Page 1 has to survive past this point for `extract-bill` (§4.2) — captured before
-        // `pages` is cleared, since the assembled PDF is already compressed to the archive's
-        // DPI setting, a different resolution than extraction wants. Checked before touching
-        // `isSaving` — this button is only ever shown when `pages` is non-empty (capturedSection
-        // above), so `nil` here would mean the button rendered for an already-empty capture
-        // list, not a real save attempt.
-        guard let extractionPage = pages.first else { return }
+    /// PLAN-MOBILE-BILLS-CAPTURE.md §4.6 Tier 1: "app-scoped save the instant the scanner
+    /// returns" — no user confirmation step in between, matching the Receipts fix this tier
+    /// reuses verbatim, and matching Android's own Bills flow (scanner finishes → straight to
+    /// Review, no separate "confirm these pages" screen).
+    ///
+    /// **Replaces an earlier design that had a real Tier-1 gap:** pages used to sit in `@State`
+    /// only, with a manual "Save" button on this screen before anything touched disk — meaning a
+    /// captured bill could be silently lost to process death or a backgrounding-triggered memory
+    /// reclaim in that window, exactly the failure class Tier 1 exists to close. `PDFBuilder
+    /// .makePDF` (durable disk write) now runs directly on the scanner's own completion callback.
+    private func handleCaptured(_ images: [UIImage]) {
+        // Defensive, not expected in practice — VisionKit's own delegate contract is that
+        // `didFinishWith` only fires with at least one page; `onCancel` covers the empty case.
+        guard let extractionPage = images.first else { return }
 
-        isSaving = true
         let fileName = "bill_\(UUID().uuidString).pdf"
         do {
-            let url = try PDFBuilder.makePDF(from: pages, fileName: fileName)
-            pages = []
+            let url = try PDFBuilder.makePDF(from: images, fileName: fileName)
             stagedPDFs = BillPdfStore.stagedPDFs()
             pendingReview = PendingBill(pdfURL: url, extractionPage: extractionPage)
         } catch {
             errorMessage = error.localizedDescription
         }
-        isSaving = false
+    }
+
+    /// §4.6 Tier 3's "retryable on next app open" — reconstructs a `PendingBill` for an already
+    /// on-disk PDF with no in-memory capture to fall back on (the app may have restarted since
+    /// it was staged). Re-renders page 1 fresh via `BillPageRenderer` — the same page-from-disk
+    /// approach `PdfRedactor`'s editor preview already relies on — rather than trying to keep a
+    /// `UIImage` alive across a process the OS may have killed in between.
+    ///
+    /// Deliberately does **not** pre-fill from any existing `BillMetadata` sidecar: Review always
+    /// re-runs `extract-bill` from scratch on a fresh `PendingBill`, matching Android's own actual
+    /// behavior on reopen (`BillReviewViewModel` never reads a saved sidecar back either) — not a
+    /// gap being carried over unnoticed, a deliberate match to the real parity bar.
+    private func openStagedBill(_ url: URL) {
+        do {
+            let page = try BillPageRenderer.renderPage(of: url, page: 0, dpi: BillPageRenderer.extractionRenderDPI)
+            pendingReview = PendingBill(pdfURL: url, extractionPage: page)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func discard(_ url: URL) {

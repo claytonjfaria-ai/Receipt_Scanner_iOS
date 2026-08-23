@@ -23,6 +23,14 @@ enum BillPageRenderer {
     /// `PdfRedactor` always re-renders the actual output at the archive's own DPI setting, not
     /// this one, matching Android's same `REDACTION_PREVIEW_DPI` vs. archive-DPI split.
     static let previewDPI: CGFloat = 150
+
+    /// §4.6 Tier 3: `CaptureView.openStagedBill` re-renders page 1 of an already-staged PDF at
+    /// this DPI when reopening it for Review with no in-memory capture to fall back on. Higher
+    /// than the 200 DPI archive default on purpose — matches Android's own
+    /// `BillPageRenderer.EXTRACTION_RENDER_DPI`, chosen for extraction accuracy, not file size,
+    /// and comfortably clears `ExtractionImageEncoder`'s 2600px downscale cap either way.
+    static let extractionRenderDPI: CGFloat = 300
+
     private static let pointsPerInch: CGFloat = 72
 
     static func pageCount(of pdfURL: URL) throws -> Int {

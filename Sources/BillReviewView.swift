@@ -60,10 +60,15 @@ struct BillReviewView: View {
 
     /// Everything a paused-for-confirmation filing attempt needs to resume — set only while a
     /// prompt below is showing. Mirrors `BillReviewViewModel.PendingFiling`.
+    ///
+    /// **No `context` field, unlike an earlier version of this type.** §4.6 Tier 3's bounded
+    /// retry needs to re-run the *whole* pipeline on each attempt, `loadContext` included —
+    /// matching Android's own `runFilingPipeline`, which reloads context at the top of every
+    /// call rather than trusting a snapshot that could be stale by the time a retry fires a few
+    /// seconds later. `runFilingPipeline` below calls `BillFilingService.loadContext` itself.
     private struct PendingFiling {
         let accessToken: String
         let scansFolder: DriveFolder
-        let context: BillFilingService.FilingContext
         let rawCompanyName: String
         let normalizedCompanyName: String
         let filingDate: SimpleDate
@@ -87,6 +92,12 @@ struct BillReviewView: View {
 
     private let maxAutomaticRetries = 2
     private let retryDelay: UInt64 = 3_000_000_000 // 3s, in nanoseconds for Task.sleep
+
+    /// §4.6 Tier 3: "Bounded retry (3 attempts, short backoff)" — matches Android's own
+    /// `FILING_MAX_ATTEMPTS`/`FILING_RETRY_DELAY_MILLIS` exactly, not a value picked
+    /// independently for iOS.
+    private let maxFilingAttempts = 3
+    private let filingRetryDelay: UInt64 = 2_000_000_000 // 2s, in nanoseconds for Task.sleep
 
     var body: some View {
         Form {
@@ -297,10 +308,25 @@ struct BillReviewView: View {
             return
         }
 
+        // §4.6 Tier 3: "persist the finished PDF + confirmed metadata locally *before*
+        // attempting the Drive upload." The PDF has been durable since capture (Tier 1); this is
+        // what was still missing on the Drive-connected path specifically — mirrors Android's
+        // own `onSaveClick`, which calls `metadataStore.save` unconditionally before
+        // `beginFiling` even checks whether Drive is reachable. A failure here aborts outright,
+        // matching Android: if local staging itself can't be trusted, proceeding to a Drive
+        // upload nothing local remembers happened would be worse, not safer.
+        do {
+            let metadata = BillMetadata(companyName: trimmedName, amount: amount, billingDate: billingDate, capturedAt: Date())
+            try BillMetadataStore.save(metadata, for: pending.pdfURL)
+        } catch {
+            errorMessage = error.localizedDescription
+            isSaving = false
+            return
+        }
+
         Task {
             do {
                 let token = try await driveAuth.validAccessToken()
-                let context = try await BillFilingService.loadContext(accessToken: token, scansFolder: scansFolder, driveAPI: RealDriveAPI())
                 let normalized = CompanyNameNormalizer.normalize(trimmedName)
                 let raw = rawExtractedCompanyName ?? trimmedName
                 let filingDate = BillFileNaming.resolveFilingDate(billingDate: billingDate, captureDate: .today())
@@ -316,7 +342,6 @@ struct BillReviewView: View {
                 pendingFiling = PendingFiling(
                     accessToken: token,
                     scansFolder: scansFolder,
-                    context: context,
                     rawCompanyName: raw,
                     normalizedCompanyName: normalized,
                     filingDate: filingDate,
@@ -358,60 +383,75 @@ struct BillReviewView: View {
         isSaving = false
     }
 
-    /// The resumable core of Save, mirroring `BillReviewViewModel.runFilingPipeline`. Called
-    /// once with no override to make the initial decision, and again from the near-miss/
+    /// The resumable core of Save, mirroring `BillReviewViewModel.runFilingPipeline` — including
+    /// §4.6 Tier 3's bounded retry (`maxFilingAttempts`/`filingRetryDelay`), which an earlier
+    /// version of this function didn't have at all: any failure anywhere in this sequence
+    /// (`loadContext`, the duplicate check, or the upload itself) went straight to an error with
+    /// no automatic retry, silently missing the plan's explicit "3 attempts, short backoff"
+    /// requirement. `attempt` is threaded through the same recursive retry Android's own version
+    /// uses, not a separate loop — a decision already made this call (a folder override from a
+    /// resumed confirmation) carries through every retry rather than being re-asked.
+    ///
+    /// Called once with no override to make the initial decision, and again from the near-miss/
     /// duplicate confirmation handlers below to resume with the user's choice already known.
-    private func runFilingPipeline(folderNameOverride: String? = nil, matchScoreOverride: Double? = nil, skipDuplicateCheck: Bool = false) async {
+    private func runFilingPipeline(
+        folderNameOverride: String? = nil,
+        matchScoreOverride: Double? = nil,
+        skipDuplicateCheck: Bool = false,
+        attempt: Int = 1
+    ) async {
         guard let pf = pendingFiling else { return }
         let driveAPI: DriveAPI = RealDriveAPI()
 
-        let folderName: String
-        let matchScore: Double?
-        if let folderNameOverride {
-            folderName = folderNameOverride
-            matchScore = matchScoreOverride
-        } else {
-            switch BillFilingService.decide(context: pf.context, rawCompanyName: pf.rawCompanyName, normalizedCompanyName: pf.normalizedCompanyName) {
-            case .needsConfirmation(let existing, let score, let proposed):
-                nearMissExisting = existing
-                nearMissScore = score
-                nearMissProposed = proposed
-                return
-            case .fromRulesCache(let name):
-                folderName = name
-                matchScore = nil
-            case .autoMatched(let name, let score):
-                folderName = name
-                matchScore = score
-            case .newFolder(let name):
-                folderName = name
-                matchScore = nil
-            }
-        }
+        do {
+            // Reloaded on every attempt, deliberately not cached across retries -- matches
+            // Android's own `runFilingPipeline`, which does the same for the same reason: a
+            // snapshot from several seconds (and up to two retries) ago risks acting on a stale
+            // folder listing or rules cache.
+            let context = try await BillFilingService.loadContext(accessToken: pf.accessToken, scansFolder: pf.scansFolder, driveAPI: driveAPI)
 
-        if !skipDuplicateCheck {
-            let candidate = FiledDocumentKey(normalizedCompanyName: folderName, filingDate: pf.filingDate)
-            do {
+            let folderName: String
+            let matchScore: Double?
+            if let folderNameOverride {
+                folderName = folderNameOverride
+                matchScore = matchScoreOverride
+            } else {
+                switch BillFilingService.decide(context: context, rawCompanyName: pf.rawCompanyName, normalizedCompanyName: pf.normalizedCompanyName) {
+                case .needsConfirmation(let existing, let score, let proposed):
+                    nearMissExisting = existing
+                    nearMissScore = score
+                    nearMissProposed = proposed
+                    isSaving = false
+                    return
+                case .fromRulesCache(let name):
+                    folderName = name
+                    matchScore = nil
+                case .autoMatched(let name, let score):
+                    folderName = name
+                    matchScore = score
+                case .newFolder(let name):
+                    folderName = name
+                    matchScore = nil
+                }
+            }
+
+            if !skipDuplicateCheck {
+                let candidate = FiledDocumentKey(normalizedCompanyName: folderName, filingDate: pf.filingDate)
                 if let duplicate = try await BillFilingService.findDuplicate(
-                    accessToken: pf.accessToken, context: pf.context, folderName: folderName, candidate: candidate, driveAPI: driveAPI
+                    accessToken: pf.accessToken, context: context, folderName: folderName, candidate: candidate, driveAPI: driveAPI
                 ) {
                     resolvedFolderName = folderName
                     resolvedMatchScore = matchScore
                     duplicateFolderName = folderName
                     duplicateDateText = duplicate.filingDate.iso8601String
+                    isSaving = false
                     return
                 }
-            } catch {
-                errorMessage = error.localizedDescription
-                isSaving = false
-                return
             }
-        }
 
-        do {
             _ = try await BillFilingService.fileDocument(
                 accessToken: pf.accessToken,
-                context: pf.context,
+                context: context,
                 rawCompanyName: pf.rawCompanyName,
                 folderName: folderName,
                 filingDate: pf.filingDate,
@@ -422,16 +462,26 @@ struct BillReviewView: View {
                 driveAPI: driveAPI,
                 redactionUpdate: pf.redactionUpdate
             )
-            // Filed for real now — the local staged copy (and its sidecar, if any) has served
-            // its purpose. Best-effort: a failed local cleanup shouldn't turn a successful Drive
-            // filing into a user-facing error.
+            // Filed for real now — the local staged copy (PDF + metadata sidecar, both via
+            // BillPdfStore.delete) has served its purpose. Best-effort: a failed local cleanup
+            // shouldn't turn a successful Drive filing into a user-facing error.
             try? BillPdfStore.delete(pending.pdfURL)
             pendingFiling = nil
             isSaving = false
             onFinished()
         } catch {
-            errorMessage = error.localizedDescription
-            isSaving = false
+            if attempt < maxFilingAttempts {
+                try? await Task.sleep(nanoseconds: filingRetryDelay)
+                await runFilingPipeline(
+                    folderNameOverride: folderNameOverride,
+                    matchScoreOverride: matchScoreOverride,
+                    skipDuplicateCheck: skipDuplicateCheck,
+                    attempt: attempt + 1
+                )
+            } else {
+                errorMessage = "Couldn't file to Drive after a few tries. The bill is saved on this device — Save again to retry."
+                isSaving = false
+            }
         }
     }
 
