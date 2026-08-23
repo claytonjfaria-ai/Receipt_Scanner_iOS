@@ -173,15 +173,28 @@ final class GoogleOAuthClient: NSObject, ASWebAuthenticationPresentationContextP
 
     // MARK: - ASWebAuthenticationPresentationContextProviding
 
+    /// Found live on-device 2026-08-23: this used to be an unconditional
+    /// `DispatchQueue.main.sync { ... }`, on the theory that the framework doesn't guarantee
+    /// which thread calls this. That was wrong in the way that matters most — in practice,
+    /// `session.start()` calls this synchronously **on the main thread**, and since this whole
+    /// class is `@MainActor` (so `signIn()` → `authenticate(url:)` → `session.start()` all run
+    /// on the main thread already), an unconditional `.sync` targeting the main queue **from**
+    /// the main queue is a classic self-deadlock — the app hangs, and iOS's watchdog kills it,
+    /// which looks exactly like "the app closes to the Home Screen" with no error ever shown.
+    /// Checking `Thread.isMainThread` first avoids the deadlock while still being safe if some
+    /// future iOS version ever does call this off the main thread.
     nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        // The framework doesn't guarantee this is called on the main thread, but UIApplication
-        // and UIWindow must be touched there -- hop explicitly rather than assuming.
-        DispatchQueue.main.sync {
-            UIApplication.shared.connectedScenes
-                .compactMap { $0 as? UIWindowScene }
-                .flatMap { $0.windows }
-                .first { $0.isKeyWindow } ?? ASPresentationAnchor()
+        if Thread.isMainThread {
+            return Self.keyWindow() ?? ASPresentationAnchor()
         }
+        return DispatchQueue.main.sync { Self.keyWindow() ?? ASPresentationAnchor() }
+    }
+
+    private static func keyWindow() -> UIWindow? {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { $0.isKeyWindow }
     }
 }
 
