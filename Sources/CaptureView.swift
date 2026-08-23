@@ -58,10 +58,16 @@ struct CaptureView: View {
                 )
                 .ignoresSafeArea()
             }
-            .navigationDestination(item: $pendingReview) { pending in
-                BillReviewView(pending: pending) {
-                    pendingReview = nil
-                    stagedPDFs = BillPdfStore.stagedPDFs()
+            // navigationDestination(item:) needs iOS 17; this target is 16.0 (matching
+            // BillsCaptureTest, deliberately, for the same device-compatibility reasons).
+            // isPresented: form is the iOS-16-compatible equivalent — caught by CI, not
+            // locally, same as the last two issues.
+            .navigationDestination(isPresented: isReviewPresented) {
+                if let pendingReview {
+                    BillReviewView(pending: pendingReview) {
+                        self.pendingReview = nil
+                        stagedPDFs = BillPdfStore.stagedPDFs()
+                    }
                 }
             }
             .alert("Something went wrong", isPresented: .constant(errorMessage != nil)) {
@@ -70,6 +76,18 @@ struct CaptureView: View {
                 Text(errorMessage ?? "")
             }
         }
+    }
+
+    /// Derived, not `@State` — `pendingReview` itself stays the single source of truth
+    /// (needed for its actual data, not just presence); this is only what
+    /// `navigationDestination(isPresented:)` needs to know whether to show it.
+    private var isReviewPresented: Binding<Bool> {
+        Binding(
+            get: { pendingReview != nil },
+            set: { isPresented in
+                if !isPresented { pendingReview = nil }
+            }
+        )
     }
 
     // MARK: - Sections
