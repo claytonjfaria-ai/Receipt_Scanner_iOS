@@ -4,47 +4,41 @@ import SwiftUI
 /// review + `extract-bill` → connect Google Drive → pick a Scans folder → Review's Save files
 /// for real (`BillFilingService`). Falls back to the pre-Drive local sidecar (`BillMetadataStore`)
 /// only when Drive isn't connected or no folder has been chosen yet.
+///
+/// **Redesigned 2026-08-23 from Clayton's own mockup:** the plain system `List` gave way to
+/// `BillScannerBackground`/`BillScannerCard`/`BillScannerHeader` (shared with `BillReviewView`
+/// and `SignInView`). Drive connection, the Scans folder, resolution, and Sign out all moved into
+/// `SettingsView` behind the header's gear icon — none of that appeared in the mockup, and
+/// "behind the gear icon" was Clayton's own explicit answer when asked. The old Bundle ID/Version
+/// diagnostics section is gone entirely, per Clayton's explicit request — `SignInView` still
+/// carries that info if it's ever needed again.
 struct CaptureView: View {
-    @EnvironmentObject private var auth: AuthStore
-    @EnvironmentObject private var driveAuth: DriveAuthStore
-    @EnvironmentObject private var folderPreferences: DriveFolderPreferences
-
     @State private var isScannerPresented = false
     @State private var errorMessage: String?
-    @State private var resolution = BillCapturePreferences.resolution
     @State private var stagedPDFs: [URL] = BillPdfStore.stagedPDFs()
     @State private var pendingReview: PendingBill?
-    @State private var isDriveConnecting = false
-    @State private var isFolderPickerPresented = false
+    @State private var isSettingsPresented = false
 
     var body: some View {
         NavigationStack {
-            List {
-                driveSection
-                resolutionSection
-                if !stagedPDFs.isEmpty {
-                    stagedSection
-                }
-                diagnosticsSection
-            }
-            .navigationTitle("Bills")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Sign out", role: .destructive) { auth.signOut() }
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        isScannerPresented = true
-                    } label: {
-                        Label("Scan", systemImage: "doc.viewfinder")
+            ZStack {
+                BillScannerBackground()
+
+                ScrollView {
+                    BillScannerCard {
+                        BillScannerHeader(onSettings: { isSettingsPresented = true })
+                        content
                     }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 24)
+                    .padding(.bottom, 40)
                 }
             }
-            .overlay {
-                if stagedPDFs.isEmpty {
-                    emptyState
-                }
-            }
+            // Hides the system nav bar entirely -- `BillScannerHeader` above is this screen's
+            // real header now, not `.navigationTitle`. Still inside a `NavigationStack` (needed
+            // for `navigationDestination` below to push Review at all), just with its own chrome
+            // switched off.
+            .toolbar(.hidden, for: .navigationBar)
             .fullScreenCover(isPresented: $isScannerPresented) {
                 DocumentScanner(
                     onFinish: { captured in
@@ -90,8 +84,8 @@ struct CaptureView: View {
                     }
                 }
             }
-            .sheet(isPresented: $isFolderPickerPresented) {
-                FolderPickerView { isFolderPickerPresented = false }
+            .sheet(isPresented: $isSettingsPresented) {
+                SettingsView()
             }
             .alert("Something went wrong", isPresented: .constant(errorMessage != nil)) {
                 Button("OK") { errorMessage = nil }
@@ -113,173 +107,118 @@ struct CaptureView: View {
         )
     }
 
-    // MARK: - Sections
+    // MARK: - Content
 
-    private var emptyState: some View {
+    private var content: some View {
         VStack(spacing: 20) {
-            Image(systemName: "doc.viewfinder")
-                .font(.system(size: 64))
-                .foregroundStyle(.tint)
-            VStack(spacing: 6) {
-                Text("Scan a bill")
-                    .font(.headline)
-                Text("Point the camera at each page. It captures automatically once the page is flat and in frame.")
+            scanButton
+
+            VStack(spacing: 4) {
+                Text("Scan")
+                    .font(.title3.bold())
+                    .foregroundStyle(Color.billScannerNavy)
+                Text("Tap the scan button to start")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
             }
-            .padding(.horizontal, 32)
-            Button("Scan pages") { isScannerPresented = true }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
+
+            stagedArea
         }
+        .padding(24)
     }
 
-    /// Milestone 3's full surface: sign-in, the Scans folder picker, and real filing
-    /// (`BillFilingService`, wired into `BillReviewView.save()`) are all live now. A connected
-    /// session with no folder chosen yet still can't file anything, hence the extra prompt below.
-    private var driveSection: some View {
-        Section {
-            if driveAuth.isConnected {
-                Label("Connected to Google Drive", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                if let folder = folderPreferences.scansFolder {
-                    HStack {
-                        Text("Scans folder")
-                        Spacer()
-                        Text(folder.name).foregroundStyle(.secondary)
-                    }
-                    Button("Change folder") { isFolderPickerPresented = true }
-                } else {
-                    Button("Choose Scans folder") { isFolderPickerPresented = true }
-                }
-                Button("Disconnect", role: .destructive) { driveAuth.disconnect() }
-            } else {
-                Button {
-                    connectDrive()
-                } label: {
-                    if isDriveConnecting {
-                        ProgressView()
-                    } else {
-                        Text("Connect Google Drive")
-                    }
-                }
-                .disabled(isDriveConnecting)
+    private var scanButton: some View {
+        Button {
+            isScannerPresented = true
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(Color.billScannerTeal.opacity(0.15))
+                    .frame(width: 150, height: 150)
+                Circle()
+                    .fill(Color.billScannerTeal)
+                    .frame(width: 116, height: 116)
+                Image(systemName: "camera.aperture")
+                    .font(.system(size: 42))
+                    .foregroundStyle(.white)
             }
-        } footer: {
-            Text(footerText)
         }
+        .buttonStyle(.plain)
+        .padding(.top, 8)
     }
 
-    private var footerText: String {
-        if !driveAuth.isConnected { return "Connect Google Drive, then choose your Scans folder, to file bills automatically." }
-        if folderPreferences.scansFolder == nil { return "Choose your Scans folder to start filing bills automatically." }
-        return "New bills file straight to this folder on Save."
-    }
-
-    private var resolutionSection: some View {
-        Section {
-            Picker("Archive resolution", selection: $resolution) {
-                ForEach(CompressionProfile.allCases) { profile in
-                    Text(profile.label).tag(profile)
+    /// §4.6 Tier 3's own on-screen surface: "a small '1 bill not yet filed' indicator ...
+    /// retryable on next app open." Empty state matches the mockup exactly (a dashed
+    /// placeholder); populated state is Clayton's own extrapolation — neither mockup showed
+    /// this state, so it's a reasonable first pass, not a literal match, and easy to revise
+    /// once he's seen it for real. A `List` here, not a plain `VStack`, specifically so
+    /// swipe-to-delete (`.swipeActions`, List-only in SwiftUI) still works while
+    /// `.scrollDisabled(true)` lets the outer `ScrollView` own all the actual scrolling.
+    @ViewBuilder
+    private var stagedArea: some View {
+        if stagedPDFs.isEmpty {
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(Color(.systemGray4), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
+                .background(RoundedRectangle(cornerRadius: 16).fill(Color(.systemGray6)))
+                .frame(height: 90)
+                .overlay {
+                    Text("Your scanned bills will appear here")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
-            }
-            // Single-parameter form deliberately — the two-parameter (`oldValue, newValue`)
-            // overload needs iOS 17, and this target's deploymentTarget is 16.0.
-            .onChange(of: resolution) { newValue in
-                BillCapturePreferences.resolution = newValue
-            }
-        } footer: {
-            Text("Applies to new scans. Higher resolution keeps small print (account numbers, dates) sharper but makes a larger file.")
-        }
-    }
-
-    /// PLAN-MOBILE-BILLS-CAPTURE.md §4.6 Tier 3's own on-screen surface: "a small '1 bill not
-    /// yet filed' indicator ... retryable on next app open." Every row is tappable, not just a
-    /// single "resume the newest" button the way Android's `UnfiledBillsNotice` is — iOS already
-    /// shows individual filenames here, so tap-to-resume *this specific* bill is strictly more
-    /// useful when more than one is genuinely stuck, at no extra cost over Android's plainer
-    /// version.
-    private var stagedSection: some View {
-        // A String title plus a `footer:` closure isn't a valid `Section` overload — SwiftUI
-        // only pairs a footer with a `header:` closure, not the plain-string title form.
-        // Caught by the CI build (exit 65), not locally — no Swift compiler on this machine.
-        Section {
-            ForEach(stagedPDFs, id: \.self) { url in
-                Button {
-                    openStagedBill(url)
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text(url.lastPathComponent)
-                                .font(.subheadline)
-                            Text(PDFBuilder.fileSizeDescription(of: url))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Saved, not yet filed — \(stagedPDFs.count)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                List {
+                    ForEach(stagedPDFs, id: \.self) { url in
+                        Button {
+                            openStagedBill(url)
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(url.lastPathComponent)
+                                        .font(.subheadline)
+                                        .foregroundStyle(Color.billScannerNavy)
+                                    Text(PDFBuilder.fileSizeDescription(of: url))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                            }
                         }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                        .buttonStyle(.plain)
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .padding(.vertical, 10)
+                        .padding(.horizontal, 12)
+                        .background(Color(.systemGray6))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .padding(.vertical, 4)
+                        .swipeActions {
+                            Button("Delete", role: .destructive) { discard(url) }
+                        }
                     }
                 }
-                .buttonStyle(.plain)
-                .swipeActions {
-                    Button("Delete", role: .destructive) { discard(url) }
-                }
+                .listStyle(.plain)
+                .scrollDisabled(true)
+                .scrollContentBackground(.hidden)
+                .frame(height: CGFloat(stagedPDFs.count) * 76)
             }
-        } header: {
-            Text("Saved, not yet filed — \(stagedPDFs.count)")
-        } footer: {
-            Text("Not filed yet — Drive wasn't connected, no Scans folder was chosen, or a previous filing attempt failed. Tap a bill to reopen Review and finish filing it.")
         }
-    }
-
-    /// Exists for exactly one reason right now: reading the real, sideloading-rewritten bundle
-    /// ID off a physical device is the prerequisite for registering this app's Google OAuth
-    /// client (plan §4.4's iOS caveat) — we proved the suffix is *stable* on `BillsCaptureTest`,
-    /// not that it's identical for a different base bundle ID. `CopyableRow` (ported from
-    /// `BillsCaptureTest`) makes that a tap-to-copy rather than a hand-retyped, one-character-off
-    /// risk into Google Cloud Console.
-    private var diagnosticsSection: some View {
-        Section("Diagnostics") {
-            CopyableRow(label: "Bundle ID", value: Bundle.main.bundleIdentifier ?? "unknown")
-            CopyableRow(label: "Version", value: "\(shortVersion) (\(buildNumber))")
-        }
-    }
-
-    private var shortVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-    }
-
-    private var buildNumber: String {
-        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
     }
 
     // MARK: - Actions
-
-    private func connectDrive() {
-        isDriveConnecting = true
-        Task {
-            do {
-                try await driveAuth.signIn()
-            } catch {
-                errorMessage = error.localizedDescription
-            }
-            isDriveConnecting = false
-        }
-    }
 
     /// PLAN-MOBILE-BILLS-CAPTURE.md §4.6 Tier 1: "app-scoped save the instant the scanner
     /// returns" — no user confirmation step in between, matching the Receipts fix this tier
     /// reuses verbatim, and matching Android's own Bills flow (scanner finishes → straight to
     /// Review, no separate "confirm these pages" screen).
-    ///
-    /// **Replaces an earlier design that had a real Tier-1 gap:** pages used to sit in `@State`
-    /// only, with a manual "Save" button on this screen before anything touched disk — meaning a
-    /// captured bill could be silently lost to process death or a backgrounding-triggered memory
-    /// reclaim in that window, exactly the failure class Tier 1 exists to close. `PDFBuilder
-    /// .makePDF` (durable disk write) now runs directly on the scanner's own completion callback.
     private func handleCaptured(_ images: [UIImage]) {
         // Defensive, not expected in practice — VisionKit's own delegate contract is that
         // `didFinishWith` only fires with at least one page; `onCancel` covers the empty case.
@@ -296,15 +235,9 @@ struct CaptureView: View {
     }
 
     /// §4.6 Tier 3's "retryable on next app open" — reconstructs a `PendingBill` for an already
-    /// on-disk PDF with no in-memory capture to fall back on (the app may have restarted since
-    /// it was staged). Re-renders page 1 fresh via `BillPageRenderer` — the same page-from-disk
-    /// approach `PdfRedactor`'s editor preview already relies on — rather than trying to keep a
-    /// `UIImage` alive across a process the OS may have killed in between.
-    ///
-    /// Deliberately does **not** pre-fill from any existing `BillMetadata` sidecar: Review always
-    /// re-runs `extract-bill` from scratch on a fresh `PendingBill`, matching Android's own actual
-    /// behavior on reopen (`BillReviewViewModel` never reads a saved sidecar back either) — not a
-    /// gap being carried over unnoticed, a deliberate match to the real parity bar.
+    /// on-disk PDF with no in-memory capture to fall back on. Re-renders page 1 fresh via
+    /// `BillPageRenderer` rather than trying to keep a `UIImage` alive across a process the OS
+    /// may have killed in between.
     private func openStagedBill(_ url: URL) {
         do {
             let page = try BillPageRenderer.renderPage(of: url, page: 0, dpi: BillPageRenderer.extractionRenderDPI)

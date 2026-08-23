@@ -20,7 +20,7 @@ struct SignInView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                background
+                BillScannerBackground()
 
                 ScrollView {
                     VStack(spacing: 20) {
@@ -43,27 +43,6 @@ struct SignInView: View {
         } message: {
             Text(errorMessage ?? "")
         }
-    }
-
-    // MARK: - Background
-
-    private var background: some View {
-        ZStack {
-            LinearGradient(
-                colors: [.billScannerTealLight, .billScannerTealDark],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            Circle()
-                .fill(Color.white.opacity(0.10))
-                .frame(width: 280, height: 280)
-                .offset(x: -150, y: -320)
-            Circle()
-                .fill(Color.black.opacity(0.12))
-                .frame(width: 240, height: 240)
-                .offset(x: 160, y: 340)
-        }
-        .ignoresSafeArea()
     }
 
     // MARK: - Card
@@ -110,33 +89,11 @@ struct SignInView: View {
             }
 
             HStack(spacing: 12) {
-                Button(action: signIn) {
-                    Group {
-                        if isSigningIn {
-                            ProgressView().tint(.white)
-                        } else {
-                            Text("Sign In").fontWeight(.semibold)
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .padding(.vertical, 14)
-                .background(canSignIn ? Color.billScannerTeal : Color.billScannerTeal.opacity(0.5))
-                .foregroundStyle(.white)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .disabled(!canSignIn)
+                BillScannerPillButton(title: "Sign In", style: .filled, isDisabled: !canSignIn, isLoading: isSigningIn, action: signIn)
 
                 // `exit(0)` -- see `quitApp`'s own kdoc for why an abrupt process kill is the
                 // actual, deliberate answer here, not a placeholder.
-                Button(action: quitApp) {
-                    Text("Cancel").fontWeight(.semibold)
-                        .frame(maxWidth: .infinity)
-                }
-                .padding(.vertical, 14)
-                .foregroundStyle(Color.billScannerNavy)
-                .background(Color.white)
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.billScannerTeal.opacity(0.35)))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+                BillScannerPillButton(title: "Cancel", style: .outlined, tint: Color.billScannerNavy, action: quitApp)
             }
 
             // Deliberately not wired up yet -- Clayton's own call 2026-08-23: both household

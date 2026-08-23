@@ -43,6 +43,7 @@ struct BillReviewView: View {
     @State private var retryCount = 0
     @State private var isSaving = false
     @State private var errorMessage: String?
+    @State private var isSettingsPresented = false
 
     // §4.7 PII redaction.
     @State private var pageCount = 1
@@ -99,52 +100,34 @@ struct BillReviewView: View {
     private let maxFilingAttempts = 3
     private let filingRetryDelay: UInt64 = 2_000_000_000 // 2s, in nanoseconds for Task.sleep
 
+    /// **Redesigned 2026-08-23 from Clayton's own mockup, second in the pair with `CaptureView`.**
+    /// Both mockups show the identical "Bill Scanner" + gear header, meaning this screen is no
+    /// longer a pushed screen with its own nav bar and back button — confirmed explicitly, not
+    /// assumed: "Save/Redact/Discard are the only way out of Review" was Clayton's own answer
+    /// when asked, matching the mockup exactly. The old page-1-only image + file-size footer are
+    /// gone, replaced by a horizontal strip of every page (`PageThumbnailView`, one per
+    /// `pageCount`), matching the mockup's "Page 1 / Page 2 / Page 3" row.
     var body: some View {
-        Form {
-            Section {
-                Image(uiImage: pending.extractionPage)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxHeight: 160)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .frame(maxWidth: .infinity)
-                    .listRowInsets(EdgeInsets())
-                    .padding(8)
-            } footer: {
-                Text(PDFBuilder.fileSizeDescription(of: pending.pdfURL))
-            }
+        ZStack {
+            BillScannerBackground()
 
-            if isExtracting {
-                Section {
-                    HStack {
-                        ProgressView()
-                        Text(retryCount == 0 ? "Reading your bill…" : "Retrying (\(retryCount)/\(maxAutomaticRetries))…")
-                    }
+            ScrollView {
+                BillScannerCard {
+                    BillScannerHeader(onSettings: { isSettingsPresented = true })
+                    reviewContent
                 }
-            } else if let extractionError {
-                Section {
-                    Text(extractionError)
-                        .foregroundStyle(.red)
-                    Button("Retry") { retryCount = 0; startExtraction() }
-                }
-            } else {
-                fieldsSection
+                .padding(.horizontal, 20)
+                .padding(.top, 24)
+                .padding(.bottom, 40)
             }
         }
-        .navigationTitle("Review bill")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button("Save") { save() }
-                    .disabled(isExtracting || isSaving || companyName.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-        }
+        .toolbar(.hidden, for: .navigationBar)
         .task(id: pending.id) {
             startExtraction()
         }
         .task(id: pending.id) {
             // Display-only -- never blocks Review from working if this fails. Defaults to 1
-            // (already the initial value) so the page navigator just doesn't show until this
+            // (already the initial value) so the thumbnail strip just shows one page until this
             // resolves, matching a single-page bill's own steady state.
             pageCount = (try? BillPageRenderer.pageCount(of: pending.pdfURL)) ?? 1
         }
@@ -156,6 +139,9 @@ struct BillReviewView: View {
                 regions: $redactionRegions,
                 onDone: { redactionEditorOpen = false }
             )
+        }
+        .sheet(isPresented: $isSettingsPresented) {
+            SettingsView()
         }
         .alert("Similar folder found", isPresented: isNearMissPresented) {
             Button("Use \u{201C}\(nearMissExisting ?? "")\u{201D}") { onNearMissChoice(useExisting: true) }
@@ -195,31 +181,106 @@ struct BillReviewView: View {
         Binding(get: { duplicateFolderName != nil }, set: { _ in })
     }
 
-    // Two sibling `Section`s — needs `@ViewBuilder` explicitly. Unlike `body`, a plain
-    // computed `some View` property isn't a ViewBuilder context on its own; every other
-    // section in this file is a single expression and doesn't need this.
+    // MARK: - Content
+
     @ViewBuilder
-    private var fieldsSection: some View {
-        Section {
-            TextField("Company", text: $companyName)
-            TextField("Amount (optional)", text: $amountText)
-                .keyboardType(.decimalPad)
-            TextField("Billing date, e.g. 2026-08-12 (optional)", text: $billingDateText)
-        } footer: {
-            Text(fieldsFooterText)
-        }
-
-        Section {
-            Button(redactionButtonLabel) { redactionEditorOpen = true }
-        }
-
-        Section {
-            Button("Discard", role: .destructive) { discard() }
+    private var reviewContent: some View {
+        if isExtracting {
+            VStack(spacing: 12) {
+                ProgressView()
+                Text(retryCount == 0 ? "Reading your bill…" : "Retrying (\(retryCount)/\(maxAutomaticRetries))…")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 48)
+        } else if let extractionError {
+            VStack(spacing: 12) {
+                Text(extractionError)
+                    .font(.subheadline)
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.center)
+                Button("Retry") { retryCount = 0; startExtraction() }
+            }
+            .padding(.vertical, 32)
+            .padding(.horizontal, 24)
+        } else {
+            VStack(spacing: 20) {
+                thumbnailRow
+                fieldsBlock
+                actionButtons
+                Text(fieldsFooterText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(24)
         }
     }
 
+    private var thumbnailRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 14) {
+                ForEach(0..<pageCount, id: \.self) { index in
+                    PageThumbnailView(pdfURL: pending.pdfURL, page: index)
+                }
+            }
+            .padding(.horizontal, 2)
+        }
+    }
+
+    private var fieldsBlock: some View {
+        VStack(spacing: 12) {
+            inlineField("Company:", text: $companyName, placeholder: "ABC Company")
+            // Accepts "$1,234.56"-style input, not just a bare number -- `save()` strips the
+            // punctuation before parsing (`parseAmount`), so this placeholder can honestly
+            // invite the format Clayton's mockup shows instead of a plainer one that would
+            // just risk a user typing something the old plain-`Double(_:)` parse silently
+            // dropped.
+            inlineField("Amount:", text: $amountText, placeholder: "$ X,XXX.XX", keyboardType: .decimalPad)
+            // "MM/DD/YY" in Clayton's mockup, deliberately not copied verbatim here: the actual
+            // parser (`SimpleDate.parseISO`, via `BillFileNaming.resolveFilingDate`) only
+            // accepts strict `YYYY-MM-DD` -- keeping the placeholder honest about the real
+            // expected format avoids a real bug where a date typed as shown silently fails to
+            // parse and falls back to today's date instead.
+            inlineField("Billed Date:", text: $billingDateText, placeholder: "YYYY-MM-DD")
+        }
+    }
+
+    private func inlineField(_ label: String, text: Binding<String>, placeholder: String, keyboardType: UIKeyboardType = .default) -> some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.billScannerNavy)
+            TextField(placeholder, text: text)
+                .keyboardType(keyboardType)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(Color(.systemGray6))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(.systemGray4)))
+    }
+
+    private var actionButtons: some View {
+        HStack(spacing: 10) {
+            BillScannerPillButton(
+                title: "Save",
+                style: .filled,
+                isDisabled: companyName.trimmingCharacters(in: .whitespaces).isEmpty,
+                isLoading: isSaving,
+                action: save
+            )
+            BillScannerPillButton(title: redactionButtonLabel, style: .outlined) { redactionEditorOpen = true }
+            BillScannerPillButton(title: "Discard", style: .outlined, tint: .secondary, action: discard)
+        }
+    }
+
+    /// Plain "Redact" matches the mockup exactly when nothing's marked yet; the marked count
+    /// is appended rather than dropped once there's something to say, since losing that signal
+    /// (already useful, already device-verified working) isn't something the redesign should
+    /// cost just to match a screenshot that only ever showed the empty state.
     private var redactionButtonLabel: String {
-        redactionRegions.isEmpty ? "Redact sensitive info" : "Redact sensitive info (\(redactionRegions.count) marked)"
+        redactionRegions.isEmpty ? "Redact" : "Redact (\(redactionRegions.count))"
     }
 
     private var canFileToDrive: Bool {
@@ -231,7 +292,7 @@ struct BillReviewView: View {
         if canFileToDrive {
             return base + "Save files this straight to your Scans folder in Drive."
         }
-        return base + "Save keeps this on the phone for now — connect Google Drive and choose a Scans folder from the Bills screen to file automatically."
+        return base + "Save keeps this on the phone for now — connect Google Drive and choose a Scans folder from the Settings screen to file automatically."
     }
 
     // MARK: - Extraction
@@ -300,7 +361,7 @@ struct BillReviewView: View {
     private func save() {
         isSaving = true
         let trimmedName = companyName.trimmingCharacters(in: .whitespaces)
-        let amount = Double(amountText)
+        let amount = parseAmount(amountText)
         let billingDate = billingDateText.isEmpty ? nil : billingDateText
 
         guard canFileToDrive, let scansFolder = folderPreferences.scansFolder else {
@@ -522,6 +583,54 @@ struct BillReviewView: View {
             onFinished()
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    /// The mockup's own placeholder ("$ X,XXX.XX") invites `$`/`,` in the typed amount, unlike
+    /// the plain-`Double(_:)` parse this used before the redesign — that would have silently
+    /// dropped the whole amount the moment a user typed a `$` or a comma. Strips everything but
+    /// digits and the decimal point first, so "$1,234.56" and "1234.56" both parse the same.
+    private func parseAmount(_ text: String) -> Double? {
+        let filtered = text.filter { $0.isNumber || $0 == "." }
+        return filtered.isEmpty ? nil : Double(filtered)
+    }
+}
+
+/// One page in Review's thumbnail strip — re-renders fresh from the saved PDF via
+/// `BillPageRenderer` at preview quality, the same source `RedactionEditorView`'s own per-page
+/// preview uses, rather than needing an in-memory capture that no longer exists after Tier 1's
+/// capture-time-durable-save change.
+private struct PageThumbnailView: View {
+    let pdfURL: URL
+    let page: Int
+
+    @State private var image: UIImage?
+
+    var body: some View {
+        VStack(spacing: 6) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10).fill(Color(.systemGray6))
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .padding(4)
+                } else {
+                    ProgressView()
+                }
+            }
+            .frame(width: 90, height: 112)
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(.systemGray4)))
+
+            Text("Page \(page + 1)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .task(id: page) {
+            image = try? await Task.detached(priority: .userInitiated) {
+                try BillPageRenderer.renderPage(of: pdfURL, page: page, dpi: BillPageRenderer.previewDPI)
+            }.value
         }
     }
 }
