@@ -25,6 +25,7 @@ struct CaptureView: View {
                 if !stagedPDFs.isEmpty {
                     stagedSection
                 }
+                diagnosticsSection
             }
             .navigationTitle("Bills")
             .toolbar {
@@ -189,6 +190,27 @@ struct CaptureView: View {
         } footer: {
             Text("Filing to Drive isn't built yet — these stay on-device until that milestone lands.")
         }
+    }
+
+    /// Exists for exactly one reason right now: reading the real, sideloading-rewritten bundle
+    /// ID off a physical device is the prerequisite for registering this app's Google OAuth
+    /// client (plan §4.4's iOS caveat) — we proved the suffix is *stable* on `BillsCaptureTest`,
+    /// not that it's identical for a different base bundle ID. `CopyableRow` (ported from
+    /// `BillsCaptureTest`) makes that a tap-to-copy rather than a hand-retyped, one-character-off
+    /// risk into Google Cloud Console.
+    private var diagnosticsSection: some View {
+        Section("Diagnostics") {
+            CopyableRow(label: "Bundle ID", value: Bundle.main.bundleIdentifier ?? "unknown")
+            CopyableRow(label: "Version", value: "\(shortVersion) (\(buildNumber))")
+        }
+    }
+
+    private var shortVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+    }
+
+    private var buildNumber: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
     }
 
     // MARK: - Actions
