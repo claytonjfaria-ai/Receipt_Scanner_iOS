@@ -36,13 +36,34 @@ Build order from here, matching the Android build order in the main plan:
 
 1. ~~Capture — VisionKit → local PDF~~ (milestone 1)
 2. ~~Review screen + `extract-bill` call~~ (this milestone)
-3. Drive OAuth + filing (plan §4.4) — **blocked** until the rewritten-bundle-ID-stability
-   question in §8's open items is settled, since the OAuth client has to be registered
-   against whatever bundle ID sideloading actually produces
+3. Drive OAuth + filing (plan §4.4) — **unblocked 2026-08-23**: the rewritten-bundle-ID
+   question this was waiting on is resolved (see below), so the OAuth client can now be
+   registered against a value that's confirmed stable
 4. PII redaction (plan §4.7)
 5. Reliability tiers (plan §4.6) — currently just Tier 1 (durable local save) and a partial
    Tier 2 (bounded retry on extraction); no Tier 3 persist-until-filed yet, since there's
    nothing to file to
+
+## Bundle-ID stability — resolved 2026-08-23
+
+Sideloading (SideStore, free Apple ID) rewrites this app's bundle ID at install time —
+`com.tap2know.receiptscanner.bills` becomes `com.tap2know.receiptscanner.bills.XXXXXXXXXX`
+with a suffix that isn't knowable until after the first install. That mattered because a
+Google OAuth client is bound to a bundle identifier: if the suffix regenerated on every
+reinstall or every 7-day certificate refresh, the OAuth client would have needed
+re-creating just as often.
+
+Tested on `BillsCaptureTest` (`dev/iOs_Test`), not this app directly — same signing
+account and sideloading path, so the result transfers. A SideStore-managed reinstall left
+the bundle ID unchanged, and — stronger evidence than the string match — a
+`UserDefaults`-backed counter survived the reinstall too, which only happens if iOS
+treated it as a continuation of the same app rather than a fresh install with its own
+empty data container. Full result: `dev/iOs_Test/docs/iPad-iPhone-Setup.md` §9/§11.
+
+**Practical consequence:** once this app is first installed on the iPad and its real
+rewritten bundle ID is read off a Device/diagnostics screen, one Google OAuth client
+registered against that value should keep working indefinitely — no need to re-register
+on every reinstall or refresh cycle.
 
 ## Why this exists before Android Bills is formally "trusted"
 
