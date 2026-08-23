@@ -27,10 +27,12 @@ Android's own milestone-2-equivalent choice exactly.
 
 No Google Drive OAuth, no real filing yet.
 
-Not yet device-tested. Compiles is the only claim made so far — confirmed by CI (milestone
-1), not yet re-confirmed for milestone 2's async/Task code, which no compiler on this dev
-machine can check ahead of a push. Run it through CI and a real sideload, with a real
-`secrets.env` sourced first (see below), before trusting sign-in or extraction on-device.
+**Device-tested 2026-08-23, partially.** Sideloaded via SideStore onto a real iPad and
+launched correctly — no crash, sign-in screen renders, the Diagnostics section works (this
+is how the real bundle ID below was actually read). Not yet confirmed: sign-in or
+`extract-bill` actually working end to end, since the CI-built `.ipa` used for this pass had
+no real Supabase secrets (`secrets.env` is gitignored, by design — see Building, below). A
+locally-generated build with real secrets sourced first is what that would take.
 
 Build order from here, matching the Android build order in the main plan:
 
@@ -53,17 +55,26 @@ Google OAuth client is bound to a bundle identifier: if the suffix regenerated o
 reinstall or every 7-day certificate refresh, the OAuth client would have needed
 re-creating just as often.
 
-Tested on `BillsCaptureTest` (`dev/iOs_Test`), not this app directly — same signing
-account and sideloading path, so the result transfers. A SideStore-managed reinstall left
-the bundle ID unchanged, and — stronger evidence than the string match — a
-`UserDefaults`-backed counter survived the reinstall too, which only happens if iOS
-treated it as a continuation of the same app rather than a fresh install with its own
-empty data container. Full result: `dev/iOs_Test/docs/iPad-iPhone-Setup.md` §9/§11.
+First tested on `BillsCaptureTest` (`dev/iOs_Test`), not this app directly — same signing
+account and sideloading path, so the result was expected to transfer. A SideStore-managed
+reinstall left `BillsCaptureTest`'s bundle ID unchanged, and — stronger evidence than the
+string match — a `UserDefaults`-backed counter survived the reinstall too, which only
+happens if iOS treated it as a continuation of the same app rather than a fresh install
+with its own empty data container. Full result: `dev/iOs_Test/docs/iPad-iPhone-Setup.md`
+§9/§11.
 
-**Practical consequence:** once this app is first installed on the iPad and its real
-rewritten bundle ID is read off a Device/diagnostics screen, one Google OAuth client
-registered against that value should keep working indefinitely — no need to re-register
-on every reinstall or refresh cycle.
+**Confirmed directly on this app, same day.** Sideloaded via the same SideStore pipeline
+and read off the sign-in screen's Diagnostics section:
+
+```
+com.tap2know.receiptscanner.bills.7HKHVWJDHC
+```
+
+The suffix, `7HKHVWJDHC`, is **identical** to `BillsCaptureTest`'s — settling the one
+nuance the `BillsCaptureTest`-only result couldn't: the suffix is tied to the **signing
+account**, not computed per-app. Every app sideloaded with this same free Apple ID gets
+this same suffix, not a fresh random one each time. This is the value to register as an
+iOS-type OAuth client in Google Cloud Console.
 
 ## Why this exists before Android Bills is formally "trusted"
 
