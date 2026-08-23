@@ -66,12 +66,28 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         GENERATE_INFOPLIST_FILE: "NO"
 
+  # Milestone 3's pure filing logic (Sources/Filing/) is the first code in this app worth real
+  # correctness tests, not just "does it compile" — runs against the iOS Simulator in CI, a
+  # separate SDK/destination from the unsigned-device build above, so it needs no signing either.
+  ReceiptScannerBillsTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: ReceiptScannerBills
+
 schemes:
   ReceiptScannerBills:
     build:
       targets:
         ReceiptScannerBills: [run, test, profile, analyze, archive]
+        ReceiptScannerBillsTests: [test]
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - ReceiptScannerBillsTests
     archive:
       config: Release

@@ -32,6 +32,20 @@ jobs:
           ls /Applications | grep -i '^Xcode' || true
           echo "--- pbxproj objectVersion (must be readable by the Xcode above) ---"
           grep -m1 objectVersion ReceiptScannerBills.xcodeproj/project.pbxproj
+          echo "--- available iOS Simulator runtimes/devices (for the test step below) ---"
+          xcrun simctl list devices available | grep -A5 -- '-- iOS'
+
+      # Milestone 3's pure filing logic (Sources/Filing/) is the first code in this app with
+      # real correctness tests, not just "does it compile." Runs against the Simulator SDK —
+      # a completely separate destination from the unsigned iphoneos build below, so it needs
+      # no signing and can't be skipped by a build that merely compiles.
+      - name: Run unit tests (Simulator)
+        run: |
+          set -euo pipefail
+          xcodebuild test \
+            -project ReceiptScannerBills.xcodeproj \
+            -scheme ReceiptScannerBills \
+            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest'
 
       # Step A of plan §8 (goal-receipt-scanner.../PLAN-MOBILE-BILLS-CAPTURE.md): compile
       # with signing switched off entirely. No Apple ID, no certificates, no interactive
