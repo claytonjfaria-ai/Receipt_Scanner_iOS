@@ -181,15 +181,22 @@ final class GoogleOAuthClient: NSObject, ASWebAuthenticationPresentationContextP
     /// on the main thread already), an unconditional `.sync` targeting the main queue **from**
     /// the main queue is a classic self-deadlock — the app hangs, and iOS's watchdog kills it,
     /// which looks exactly like "the app closes to the Home Screen" with no error ever shown.
-    /// Checking `Thread.isMainThread` first avoids the deadlock while still being safe if some
-    /// future iOS version ever does call this off the main thread.
+    ///
+    /// `MainActor.assumeIsolated` (not plain `nonisolated` on `keyWindow()`, which was tried
+    /// first and doesn't compile — `UIApplication.shared` is itself `@MainActor`-isolated in
+    /// current SDKs, so a nonisolated function can't call it either) is the correct escape
+    /// hatch here: it's exactly the tool for "this synchronous callback is known to run on the
+    /// main thread, but the type system can't verify that statically."
     nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
         if Thread.isMainThread {
-            return Self.keyWindow() ?? ASPresentationAnchor()
+            return MainActor.assumeIsolated { Self.keyWindow() ?? ASPresentationAnchor() }
         }
-        return DispatchQueue.main.sync { Self.keyWindow() ?? ASPresentationAnchor() }
+        return DispatchQueue.main.sync {
+            MainActor.assumeIsolated { Self.keyWindow() ?? ASPresentationAnchor() }
+        }
     }
 
+    @MainActor
     private static func keyWindow() -> UIWindow? {
         UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
