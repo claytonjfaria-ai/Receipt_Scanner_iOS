@@ -5,19 +5,22 @@ import SwiftUI
 /// the eventual goal — capture, extract-bill, review, redact, file to Drive — built up in
 /// the same dependency order the plan used on Android (§4.1 first).
 ///
-/// Milestone 3 (current): Drive OAuth (sign-in flow built; folder picker and real filing not
-/// yet). `DriveAuthStore` is a second, independent identity system from `AuthStore` (Supabase) —
-/// see `DriveSession.swift`'s header for why they're deliberately not unified.
+/// Milestone 3 (current): Drive OAuth sign-in, the Scans folder picker, and real filing
+/// (`BillFilingService`) are all wired up now. `DriveAuthStore` is a second, independent identity
+/// system from `AuthStore` (Supabase) — see `DriveSession.swift`'s header for why they're
+/// deliberately not unified.
 @main
 struct ReceiptScannerBillsApp: App {
     @StateObject private var auth = AuthStore()
     @StateObject private var driveAuth = DriveAuthStore()
+    @StateObject private var folderPreferences = DriveFolderPreferences()
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(auth)
                 .environmentObject(driveAuth)
+                .environmentObject(folderPreferences)
         }
     }
 }

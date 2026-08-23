@@ -16,6 +16,10 @@ struct SimpleDate: Equatable {
     /// `YYYYMMDD` — the filing-filename convention (`BillFileNaming`).
     var compactString: String { String(format: "%04d%02d%02d", year, month, day) }
 
+    /// `YYYY-MM-DD` — Drive's `appProperties` billing-date convention (`BillFilingService`),
+    /// matching `LocalDate.toString()` on Android and this type's own `parseISO` input format.
+    var iso8601String: String { String(format: "%04d-%02d-%02d", year, month, day) }
+
     /// Parses a strict `YYYY-MM-DD` string — the shape `extract-bill`'s `billing_date` and
     /// Review's free-text field are expected to use. Deliberately simple (no `DateFormatter`,
     /// no calendar/timezone involved at all) since the whole point is to never touch a timezone.

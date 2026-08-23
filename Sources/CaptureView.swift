@@ -1,12 +1,13 @@
 import SwiftUI
 
 /// Milestone 3 of the real iOS Bills app: capture → assemble a durable on-device PDF →
-/// review + `extract-bill` → connect Google Drive. Review's Save still persists confirmed
-/// metadata to a local sidecar (`BillMetadataStore`) rather than filing for real — the
-/// folder picker and actual Drive upload aren't wired up yet, just the sign-in itself.
+/// review + `extract-bill` → connect Google Drive → pick a Scans folder → Review's Save files
+/// for real (`BillFilingService`). Falls back to the pre-Drive local sidecar (`BillMetadataStore`)
+/// only when Drive isn't connected or no folder has been chosen yet.
 struct CaptureView: View {
     @EnvironmentObject private var auth: AuthStore
     @EnvironmentObject private var driveAuth: DriveAuthStore
+    @EnvironmentObject private var folderPreferences: DriveFolderPreferences
 
     @State private var pages: [UIImage] = []
     @State private var isScannerPresented = false
@@ -16,6 +17,7 @@ struct CaptureView: View {
     @State private var isSaving = false
     @State private var pendingReview: PendingBill?
     @State private var isDriveConnecting = false
+    @State private var isFolderPickerPresented = false
 
     var body: some View {
         NavigationStack {
@@ -93,6 +95,9 @@ struct CaptureView: View {
                     }
                 }
             }
+            .sheet(isPresented: $isFolderPickerPresented) {
+                FolderPickerView { isFolderPickerPresented = false }
+            }
             .alert("Something went wrong", isPresented: .constant(errorMessage != nil)) {
                 Button("OK") { errorMessage = nil }
             } message: {
@@ -168,14 +173,24 @@ struct CaptureView: View {
         }
     }
 
-    /// Milestone 3's actual new surface: sign-in only, no folder picker or real filing wired
-    /// up yet (§4.4's remaining pieces). A connected session doesn't do anything downstream of
-    /// this screen yet — Save still writes to the local metadata sidecar either way.
+    /// Milestone 3's full surface: sign-in, the Scans folder picker, and real filing
+    /// (`BillFilingService`, wired into `BillReviewView.save()`) are all live now. A connected
+    /// session with no folder chosen yet still can't file anything, hence the extra prompt below.
     private var driveSection: some View {
         Section {
             if driveAuth.isConnected {
                 Label("Connected to Google Drive", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
+                if let folder = folderPreferences.scansFolder {
+                    HStack {
+                        Text("Scans folder")
+                        Spacer()
+                        Text(folder.name).foregroundStyle(.secondary)
+                    }
+                    Button("Change folder") { isFolderPickerPresented = true }
+                } else {
+                    Button("Choose Scans folder") { isFolderPickerPresented = true }
+                }
                 Button("Disconnect", role: .destructive) { driveAuth.disconnect() }
             } else {
                 Button {
@@ -190,8 +205,14 @@ struct CaptureView: View {
                 .disabled(isDriveConnecting)
             }
         } footer: {
-            Text("Filing to Drive isn't wired up yet — this is sign-in only.")
+            Text(footerText)
         }
+    }
+
+    private var footerText: String {
+        if !driveAuth.isConnected { return "Connect Google Drive, then choose your Scans folder, to file bills automatically." }
+        if folderPreferences.scansFolder == nil { return "Choose your Scans folder to start filing bills automatically." }
+        return "New bills file straight to this folder on Save."
     }
 
     private var resolutionSection: some View {
@@ -234,7 +255,9 @@ struct CaptureView: View {
         } header: {
             Text("Saved, not yet filed — \(stagedPDFs.count)")
         } footer: {
-            Text("Filing to Drive isn't built yet — these stay on-device until that milestone lands.")
+            // Honest about a real gap, not a promise this screen can't keep: there's no
+            // re-open-and-refile action here yet, so these stay stuck until that's built.
+            Text("Saved before Drive was connected or a Scans folder was chosen, so these weren't filed. Re-filing an already-staged bill isn't built yet.")
         }
     }
 
