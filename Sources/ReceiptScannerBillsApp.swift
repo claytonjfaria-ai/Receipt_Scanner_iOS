@@ -11,6 +11,9 @@ import SwiftUI
 /// deliberately not unified.
 @main
 struct ReceiptScannerBillsApp: App {
+    // Orientation restriction (2026-08-23, Settings' "Allow landscape" toggle) has no
+    // SwiftUI-native equivalent -- see AppDelegate.swift's own kdoc.
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var auth = AuthStore()
     @StateObject private var driveAuth = DriveAuthStore()
     @StateObject private var folderPreferences = DriveFolderPreferences()

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Everything that used to sit directly on the Bills home screen, moved behind that screen's
 /// gear icon once Clayton's redesign (2026-08-23) needed the main screen to stay as clean as
@@ -18,6 +19,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var resolution = BillCapturePreferences.resolution
+    @State private var allowLandscape = OrientationPreferences.allowLandscape
     @State private var isDriveConnecting = false
     @State private var isFolderPickerPresented = false
     @State private var errorMessage: String?
@@ -27,6 +29,7 @@ struct SettingsView: View {
             List {
                 driveSection
                 resolutionSection
+                orientationSection
                 Section {
                     Button("Sign out", role: .destructive) { auth.signOut() }
                 }
@@ -107,6 +110,22 @@ struct SettingsView: View {
         }
     }
 
+    /// 2026-08-23, Clayton's explicit ask: the app defaults to portrait everywhere, including
+    /// while scanning, with this as the one opt-in escape hatch. Off is a hard portrait lock, not
+    /// just a preference the OS might still ignore — see `AppDelegate.swift`. On allows rotating
+    /// into landscape; it does not *force* landscape (his own explicit choice when asked).
+    private var orientationSection: some View {
+        Section {
+            Toggle("Allow landscape", isOn: $allowLandscape)
+                .onChange(of: allowLandscape) { newValue in
+                    OrientationPreferences.allowLandscape = newValue
+                    applyOrientationChange(allowLandscape: newValue)
+                }
+        } footer: {
+            Text("Off keeps the app in portrait everywhere, including while scanning. On lets it rotate into landscape too.")
+        }
+    }
+
     // MARK: - Actions
 
     private func connectDrive() {
@@ -119,5 +138,18 @@ struct SettingsView: View {
             }
             isDriveConnecting = false
         }
+    }
+
+    /// `AppDelegate`'s `supportedInterfaceOrientationsFor:` alone only takes effect on the
+    /// *next* orientation-negotiation event (e.g. an actual device rotation) -- without this,
+    /// toggling the setting would silently do nothing until the user happened to rotate the
+    /// device anyway. `requestGeometryUpdate` (iOS 16+, matching this target's deployment
+    /// target) forces the window scene to re-query and apply the new mask immediately.
+    private func applyOrientationChange(allowLandscape: Bool) {
+        guard let scene = UIApplication.shared.connectedScenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene else { return }
+        let mask: UIInterfaceOrientationMask = allowLandscape ? .all : .portrait
+        // Best-effort, no completion handler needed: worst case the new mask still applies on
+        // the next natural rotation event, same as if this call hadn't been made at all.
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask))
     }
 }
