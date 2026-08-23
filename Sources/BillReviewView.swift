@@ -334,6 +334,15 @@ struct BillReviewView: View {
     /// Silently does nothing if Drive isn't connected, no Scans folder is chosen yet, or the
     /// lookup fails for any reason — a missing suggestion just means the user draws the box by
     /// hand this once, same as any first-time bill; it must never interrupt Review.
+    ///
+    /// **Deliberately does not auto-open the editor**, unlike Android's own equivalent (and an
+    /// earlier version of this function) — Clayton's own explicit call 2026-08-23, found live on
+    /// a repeat scan of the same Citi bill: auto-jumping to the redaction screen made sense when
+    /// Redact was a small link buried below the fields, but now that it's a visible button in
+    /// Review's own action row, auto-navigating there the instant extraction finishes is just
+    /// intrusive, not a convenience. The suggestion is still loaded into `redactionRegions` (so
+    /// the "Redact (N)" button badge reflects it, and opening the editor by hand starts on the
+    /// right page) — only the automatic navigation is gone.
     private func loadRedactionSuggestions() {
         guard !redactionSuggestionsAttempted else { return }
         let trimmed = companyName.trimmingCharacters(in: .whitespaces)
@@ -348,7 +357,6 @@ struct BillReviewView: View {
                 let suggested = RedactionRuleMatcher.suggestRegions(normalizedCompanyName: normalized, redactionRulesCache: context.redactionRulesCache)
                 guard !suggested.isEmpty else { return }
                 redactionRegions = suggested
-                redactionEditorOpen = true
                 redactionCurrentPage = suggested.first?.page ?? 0
             } catch {
                 // Non-fatal by design -- see this function's own header.
